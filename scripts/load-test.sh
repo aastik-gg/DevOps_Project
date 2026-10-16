@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generate CPU load on the backend so the HPA scales out, and traffic for the Grafana panels.
-# Runs as a Job *inside* the cluster, so it works the same on minikube and EKS.
+# Runs as a Job *inside* the cluster, so it works the same on minikube or any other cluster.
 #
 #   ./scripts/load-test.sh                         # 3 minutes, 20 workers
 #   DURATION=300 WORKERS=40 ./scripts/load-test.sh

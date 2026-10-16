@@ -96,7 +96,7 @@ jobs:
           version: ${{ env.HELM_VERSION }}
       - name: Helm lint + render every values file
         run: |
-          for f in "" values-local.yaml values-eks.yaml; do
+          for f in "" values-local.yaml values-prod.yaml; do
             helm lint helm/gearloop ${f:+-f helm/gearloop/$f}
             helm template gearloop helm/gearloop ${f:+-f helm/gearloop/$f} > /dev/null
           done
@@ -170,7 +170,7 @@ jobs:
     name: Deploy to Kubernetes (Helm)
     needs: images
     # Opt-in: set repository variable DEPLOY_ENABLED=true and secret KUBE_CONFIG_DATA (base64 kubeconfig)
-    # once the EKS cluster from terraform/ exists.
+    # once a cluster is reachable from GitHub.
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
@@ -193,7 +193,7 @@ jobs:
           kubectl apply -f k8s/namespace.yaml
           helm upgrade --install gearloop ./helm/gearloop \
             --namespace gearloop \
-            -f helm/gearloop/values-eks.yaml \
+            -f helm/gearloop/values-prod.yaml \
             --set backend.image.repository=ghcr.io/$owner/gearloop-backend \
             --set frontend.image.repository=ghcr.io/$owner/gearloop-frontend \
             --set backend.image.tag=${{ github.sha }} \

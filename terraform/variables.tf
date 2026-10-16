@@ -1,82 +1,82 @@
-variable "aws_region" {
-  description = "AWS region for every resource"
+variable "kubeconfig_path" {
+  description = "kubeconfig used by the kubernetes and helm providers"
   type        = string
-  default     = "ap-south-1"
+  default     = "~/.kube/config"
 }
 
-variable "environment" {
-  description = "Environment name used in resource names and tags"
+variable "kube_context" {
+  description = "kubeconfig context to deploy into"
   type        = string
-  default     = "dev"
+  default     = "minikube"
 }
 
-variable "cluster_name" {
-  description = "EKS cluster name"
+variable "namespace" {
+  description = "Namespace for the GearLoop release"
   type        = string
-  default     = "gearloop-eks"
+  default     = "gearloop"
 }
 
-variable "kubernetes_version" {
-  description = "EKS control plane version"
+variable "values_file" {
+  description = "Chart values file under helm/gearloop/ for this environment"
   type        = string
-  default     = "1.34"
+  default     = "values-local.yaml"
 }
 
-variable "vpc_cidr" {
-  description = "CIDR block for the VPC"
-  type        = string
-  default     = "10.42.0.0/16"
+variable "backend_image" {
+  description = "Backend image repository and tag"
+  type        = object({ repository = string, tag = string })
+  default     = { repository = "gearloop-backend", tag = "local" }
 }
 
-variable "az_count" {
-  description = "How many availability zones to spread subnets over (EKS needs at least 2)"
-  type        = number
-  default     = 2
+variable "frontend_image" {
+  description = "Frontend image repository and tag"
+  type        = object({ repository = string, tag = string })
+  default     = { repository = "gearloop-frontend", tag = "local" }
+}
+
+variable "image_pull_policy" {
+  description = "Never for images built inside minikube, IfNotPresent for registry images"
+  type        = string
+  default     = "Never"
 
   validation {
-    condition     = var.az_count >= 2 && var.az_count <= 3
-    error_message = "az_count must be 2 or 3."
+    condition     = contains(["Always", "IfNotPresent", "Never"], var.image_pull_policy)
+    error_message = "image_pull_policy must be Always, IfNotPresent or Never."
   }
 }
 
-variable "use_nat_gateway" {
-  description = <<-EOT
-    true  = worker nodes live in private subnets behind one NAT gateway (closer to production).
-    false = nodes go in the public subnets with public IPs; cheaper for a short classroom demo.
-  EOT
+variable "ingress_host" {
+  description = "Host name the Ingress answers on"
+  type        = string
+  default     = "gearloop.local"
+}
+
+variable "enable_monitoring" {
+  description = "Install kube-prometheus-stack and the chart's ServiceMonitor, alert rules and dashboard"
   type        = bool
   default     = true
 }
 
-variable "node_instance_types" {
-  description = "EC2 instance types for the managed node group"
-  type        = list(string)
-  default     = ["t3.medium"]
-}
-
-variable "node_capacity_type" {
-  description = "ON_DEMAND or SPOT"
+variable "monitoring_chart_version" {
+  description = "Pinned kube-prometheus-stack chart version"
   type        = string
-  default     = "ON_DEMAND"
+  default     = "92.9.0"
 }
 
-variable "node_min_size" {
-  type    = number
-  default = 2
-}
-
-variable "node_desired_size" {
-  type    = number
-  default = 2
-}
-
-variable "node_max_size" {
-  type    = number
-  default = 4
-}
-
-variable "cluster_public_access_cidrs" {
-  description = "Who may reach the Kubernetes API endpoint. Narrow this to your own IP."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
+variable "quota" {
+  description = "Upper bound on what the whole namespace may request"
+  type = object({
+    requests_cpu    = string
+    requests_memory = string
+    limits_cpu      = string
+    limits_memory   = string
+    pods            = number
+  })
+  default = {
+    requests_cpu    = "4"
+    requests_memory = "4Gi"
+    limits_cpu      = "8"
+    limits_memory   = "8Gi"
+    pods            = 30
+  }
 }

@@ -1,5 +1,5 @@
 # Default values for the GearLoop chart. Environment files (values-local.yaml,
-# values-eks.yaml) only override what differs.
+# values-prod.yaml) only override what differs.
 
 imagePullSecrets: []
 clusterDomain: cluster.local

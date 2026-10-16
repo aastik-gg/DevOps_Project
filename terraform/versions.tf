@@ -2,29 +2,26 @@ terraform {
   required_version = ">= 1.7.0"
 
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.0"
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 3.3"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 3.3"
     }
   }
-
-  # Remote state (recommended for teams / CI). Create the bucket once, then uncomment.
-  # backend "s3" {
-  #   bucket       = "gearloop-tfstate-<your-account-id>"
-  #   key          = "gearloop/eks.tfstate"
-  #   region       = "ap-south-1"
-  #   use_lockfile = true
-  # }
 }
 
-provider "aws" {
-  region = var.aws_region
+# Both providers talk to the cluster in your kubeconfig (minikube by default).
+provider "kubernetes" {
+  config_path    = pathexpand(var.kubeconfig_path)
+  config_context = var.kube_context
+}
 
-  default_tags {
-    tags = {
-      Project     = "gearloop"
-      Environment = var.environment
-      ManagedBy   = "terraform"
-    }
+provider "helm" {
+  kubernetes = {
+    config_path    = pathexpand(var.kubeconfig_path)
+    config_context = var.kube_context
   }
 }

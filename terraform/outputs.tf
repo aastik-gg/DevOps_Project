@@ -1,32 +1,22 @@
-output "cluster_name" {
-  value = aws_eks_cluster.main.name
+output "namespace" {
+  value = kubernetes_namespace_v1.gearloop.metadata[0].name
 }
 
-output "cluster_endpoint" {
-  value = aws_eks_cluster.main.endpoint
+output "release" {
+  value = "${helm_release.gearloop.name} rev ${helm_release.gearloop.metadata.revision} (${helm_release.gearloop.status})"
 }
 
-output "cluster_version" {
-  value = aws_eks_cluster.main.version
+output "app_url" {
+  value = "http://${var.ingress_host}/"
 }
 
-output "vpc_id" {
-  value = aws_vpc.main.id
+output "grafana_url" {
+  value = var.enable_monitoring ? "http://grafana.${var.ingress_host}/" : null
 }
 
-output "public_subnet_ids" {
-  value = aws_subnet.public[*].id
-}
-
-output "private_subnet_ids" {
-  value = aws_subnet.private[*].id
-}
-
-output "node_subnet_mode" {
-  value = var.use_nat_gateway ? "private subnets via NAT" : "public subnets"
-}
-
-output "configure_kubectl" {
-  description = "Run this after apply"
-  value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${aws_eks_cluster.main.name}"
+output "next_steps" {
+  value = <<-EOT
+    echo "$(minikube ip) ${var.ingress_host} grafana.${var.ingress_host}" | sudo tee -a /etc/hosts
+    helm test gearloop -n ${var.namespace}
+  EOT
 }
