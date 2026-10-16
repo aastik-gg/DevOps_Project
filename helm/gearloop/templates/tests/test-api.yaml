@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "gearloop.fullname" . }}-test-api
+  labels:
+    {{- include "gearloop.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  securityContext:
+    {{- include "gearloop.podSecurityContext" . | nindent 4 }}
+    runAsUser: 65534
+  containers:
+    - name: smoke
+      image: busybox:1.37
+      command: ["sh", "-c"]
+      args:
+        - |
+          set -e
+          base=http://{{ include "gearloop.fullname" . }}-backend:8000
+          wget -qO- $base/ready | grep READY
+          wget -qO- $base/api/stats | grep total_items
+          wget -qO- http://{{ include "gearloop.fullname" . }}-frontend/ | grep -i gearloop
+      securityContext:
+        {{- include "gearloop.containerSecurityContext" . | nindent 8 }}

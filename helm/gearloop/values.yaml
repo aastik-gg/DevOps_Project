@@ -1,0 +1,79 @@
+# Default values for the GearLoop chart. Environment files (values-local.yaml,
+# values-eks.yaml) only override what differs.
+
+imagePullSecrets: []
+
+backend:
+  image:
+    repository: ghcr.io/aastik-gg/gearloop-backend
+    tag: ""            # CI sets this to the commit SHA; falls back to Chart.appVersion
+    pullPolicy: IfNotPresent
+  replicas: 2          # ignored while the HPA is enabled
+  maxLoanDays: 30
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+frontend:
+  image:
+    repository: ghcr.io/aastik-gg/gearloop-frontend
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests: {cpu: 25m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+# Runs `alembic upgrade head` as a Helm hook Job (post-install, pre-upgrade)
+# so replicas never race each other on migrations.
+migrations:
+  enabled: true
+  seedDemoData: true   # load demo equipment if the inventory is empty
+
+postgres:
+  # Set enabled=false and fill externalUrl to use a managed DB (e.g. Amazon RDS).
+  enabled: true
+  image: postgres:17-alpine
+  database: gearloop
+  username: gearloop
+  password: ""         # empty = random password generated on first install and kept on upgrades
+  storage: 2Gi
+  storageClassName: ""
+  externalUrl: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+
+ingress:
+  enabled: true
+  className: nginx
+  host: gearloop.local
+  annotations: {}
+  tls: []              # e.g. [{secretName: gearloop-tls, hosts: [gearloop.example.com]}]
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 60
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true        # only backend + migration Job may reach Postgres
+
+monitoring:
+  serviceMonitor:
+    enabled: false     # needs the Prometheus Operator CRDs (kube-prometheus-stack)
+    interval: 15s
+    labels:
+      release: monitoring
+  prometheusRule:
+    enabled: false
+    labels:
+      release: monitoring
+  grafanaDashboard:
+    enabled: false     # ConfigMap picked up by the Grafana sidecar
+    namespace: ""      # defaults to the release namespace

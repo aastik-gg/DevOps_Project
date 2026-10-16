@@ -1,0 +1,23 @@
+{{- if and .Values.networkPolicy.enabled .Values.postgres.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gearloop.fullname" . }}-postgres
+  labels:
+    {{- include "gearloop.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "gearloop.selectorLabels" (dict "ctx" . "component" "postgres") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "gearloop.selectorLabels" (dict "ctx" . "component" "backend") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "gearloop.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 14 }}
+      ports:
+        - port: 5432
+{{- end }}

@@ -1,0 +1,16 @@
+{{- if .Values.pdb.enabled }}
+{{- range list "backend" "frontend" }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gearloop.fullname" $ }}-{{ . }}
+  labels:
+    {{- include "gearloop.labels" $ | nindent 4 }}
+spec:
+  minAvailable: {{ $.Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "gearloop.selectorLabels" (dict "ctx" $ "component" .) | nindent 6 }}
+{{- end }}
+{{- end }}

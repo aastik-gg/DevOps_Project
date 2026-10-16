@@ -1,0 +1,16 @@
+# AWS EKS (cluster from ../../terraform). CI passes the image tag with --set.
+backend:
+  resources:
+    requests: {cpu: 200m, memory: 192Mi}
+    limits: {cpu: "1", memory: 384Mi}
+postgres:
+  storage: 10Gi
+  storageClassName: gp2
+ingress:
+  host: gearloop.example.com    # replace with your domain / the NLB hostname
+hpa:
+  maxReplicas: 10
+monitoring:
+  serviceMonitor: {enabled: true}
+  prometheusRule: {enabled: true}
+  grafanaDashboard: {enabled: true}

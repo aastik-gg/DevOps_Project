@@ -1,0 +1,19 @@
+# Minikube: images built locally and loaded with `minikube image load`.
+backend:
+  image:
+    repository: gearloop-backend
+    tag: local
+    pullPolicy: Never
+frontend:
+  image:
+    repository: gearloop-frontend
+    tag: local
+    pullPolicy: Never
+postgres:
+  password: gearloop-local
+ingress:
+  host: gearloop.local
+monitoring:
+  serviceMonitor: {enabled: true}
+  prometheusRule: {enabled: true}
+  grafanaDashboard: {enabled: true}

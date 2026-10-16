@@ -1,0 +1,13 @@
+GearLoop {{ .Chart.AppVersion }} is deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+  kubectl get pods,svc,ingress,hpa -n {{ .Release.Namespace }}
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+
+Open http://{{ .Values.ingress.host }}/  (API docs: http://{{ .Values.ingress.host }}/docs)
+If the host is not in DNS, map it to your ingress controller's address in /etc/hosts.
+{{- else }}
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "gearloop.fullname" . }}-frontend 3000:80
+{{- end }}

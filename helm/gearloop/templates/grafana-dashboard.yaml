@@ -1,0 +1,13 @@
+{{- if .Values.monitoring.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gearloop.fullname" . }}-dashboard
+  namespace: {{ default .Release.Namespace .Values.monitoring.grafanaDashboard.namespace }}
+  labels:
+    {{- include "gearloop.labels" . | nindent 4 }}
+    grafana_dashboard: "1"   # kube-prometheus-stack's Grafana sidecar loads ConfigMaps with this label
+data:
+  gearloop.json: |-
+    {{- .Files.Get "dashboards/gearloop.json" | nindent 4 }}
+{{- end }}

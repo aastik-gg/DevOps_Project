@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gearloop
+description: GearLoop - lab equipment checkout desk (React + FastAPI + PostgreSQL)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords: [fastapi, react, postgres, inventory]
+maintainers:
+  - name: Aastik Nayyar
