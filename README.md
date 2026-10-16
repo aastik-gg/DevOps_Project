@@ -313,8 +313,8 @@ mode Terraform creates the `gearloop-db` Secret with a random password and the c
 |---|---|
 | <img src="screenshots/37-argocd-history.png" alt="Argo CD sync history"> | <img src="screenshots/39-gitops-sync-selfheal.png" alt="GitOps sync and self-heal timings"> |
 
-*These screenshots show the local test repository URL; once the repo is pushed, the Application tracks
-`https://github.com/aastik-gg/DevOps_Project.git`.*
+*These screenshots are from the local test run. The live Application now tracks `https://github.com/aastik-gg/DevOps_Project.git`;
+the walkthrough video shows it syncing a real CI commit.*
 
 ## 9. Kubernetes + Helm (`helm/gearloop/`)
 
@@ -441,18 +441,18 @@ and Ingress pointing at the wrong Service port.
 | HPA | ✅ `load-test.sh` scaled the backend 2 → 4 → 6 |
 | Prometheus / Grafana | ✅ both backend targets UP, 4 alert rules loaded, dashboard auto-imported with every panel populated |
 | Troubleshooting lab | ✅ all 5 manifests produce the documented symptom (ErrImagePull, no endpoints, readiness 503, OOMKilled 137, ingress 503) |
-| GitHub Actions | ⚠️ `actionlint` clean; needs a push to GitHub to actually run |
+| GitHub Actions + GHCR | ✅ every push to `main` runs green (6 jobs, about 2 min); images pushed to GHCR tagged with the commit SHA and publicly pullable; the `gitops` job commits the tag bump |
 | Terraform | ✅ `plan` / `apply` / `destroy` / `apply` run against minikube; `destroy` leaves no releases, namespaces or volumes |
-| Argo CD (GitOps) | ✅ against a local Git server: auto-sync of a pushed commit in 18 s, self-heal in 2 s, clean destroy. ⚠️ Against GitHub only after the push |
+| Argo CD (GitOps) | ✅ from GitHub: a UI change pushed to `main` was built, scanned, tagged and synced by Argo CD about 40 s after CI's tag commit; self-heal reverts manual scaling. Earlier local test: sync in 18 s, self-heal in 2 s, clean destroy |
 
 ## 15. Known issues and limitations
 
 * **No cloud deployment.** AWS is out of scope for this project, so Terraform manages a local minikube cluster instead of
   provisioning a VPC and EKS. The chart and pipeline are cluster-agnostic (`values-prod.yaml`), but they were not run on a cloud provider.
-* **CI, GHCR and Argo CD-from-GitHub run only after the push.** The workflow is `actionlint`-clean and every step was run
-  locally, but the first green GitHub Actions run, the SHA-tagged GHCR packages and the GitHub-backed Argo CD sync happen once the repository is on GitHub.
-* **`values-gitops.yaml` starts with the tag `bootstrap`.** Until the first CI run on `main` replaces it, Argo CD mode
-  shows `ImagePullBackOff`. GHCR packages are private by default; make them public or add an `imagePullSecret`.
+* **CI deploys only through Git.** The pipeline never touches the cluster: on `main` it commits the new image tag and Argo CD pulls it.
+  A laptop cluster needs to be running for that sync to happen; while it is off, commits simply wait in Git.
+* **Fresh forks start with the tag `bootstrap`.** In a new copy of the repo, Argo CD mode shows `ImagePullBackOff` until the
+  first CI run on `main` replaces it. GHCR packages are private by default; make them public or add an `imagePullSecret`.
 * **Single-node demo database.** PostgreSQL runs as one StatefulSet replica on a minikube hostPath volume, with no
   backups or replication. A real deployment would use a managed database (`postgres.enabled=false` + `postgres.externalUrl`).
 * **Plain HTTP locally.** Ingress, Grafana and Argo CD are served over HTTP on `*.gearloop.local` hosts that must be added to
