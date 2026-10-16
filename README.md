@@ -8,7 +8,7 @@ This repository is my **Session 21 DevOps capstone**. It takes the app from a la
 to a monitored Kubernetes deployment:
 
 > React + Vite → FastAPI → PostgreSQL (SQLAlchemy + Alembic) → pytest → Docker → GitHub Actions →
-> Trivy → GHCR → Terraform (AWS VPC + EKS) → Helm → Ingress → HPA → Prometheus + Grafana → troubleshooting
+> Trivy → GHCR → Terraform → Helm → Kubernetes (minikube) → Ingress → HPA → Prometheus + Grafana → troubleshooting
 
 The DevOps layer follows the course architecture. The application domain, the code and these design choices are my own.
 
@@ -28,7 +28,7 @@ The DevOps layer follows the course architecture. The application domain, the co
 | Containers | frontend runs as root | both images non-root (backend uid 10001, unprivileged nginx uid 101); read-only root FS in Kubernetes; pip removed from the runtime image |
 | Kubernetes | Deployment + Service | Pod Security `restricted` namespace, StatefulSet Postgres, PDBs, NetworkPolicy (only backend may reach Postgres), startup/readiness/liveness probes, `helm test` smoke test |
 | CI | single job, tag-pinned actions | parallel backend / frontend / IaC jobs, matrix image build, Trivy SARIF to the Security tab + blocking gate, all actions **pinned to commit SHAs** |
-| Terraform | community modules in one file | plain AWS resources split by concern (VPC, IAM, EKS), EBS CSI driver via EKS Pod Identity, NAT on/off toggle for cost |
+| Terraform | AWS VPC + EKS modules | no cloud account needed: Terraform owns the **local cluster's** namespaces, quota and both Helm releases (monitoring + app), so `plan` / `apply` / `destroy` actually run, and `destroy` leaves nothing behind |
 
 ---
 
@@ -42,7 +42,7 @@ The DevOps layer follows the course architecture. The application domain, the co
                                        └─ images (matrix: backend, frontend)
                                             build ─► Trivy (SARIF + HIGH/CRITICAL gate) ─► push ghcr.io/…:<commit-sha>
                                                                                               │
-                     Terraform: VPC (2 public + 2 private subnets, NAT) + EKS + node group     │ helm upgrade --install
+   Terraform (kubernetes + helm providers): namespaces, quota, kube-prometheus-stack, gearloop  │ helm upgrade --install
                                                    │                                          ▼
  Browser ─► Ingress (nginx) ─┬─ /            ─► frontend Service ─► nginx pods ×2 (React build)
                              └─ /api, /docs  ─► backend Service  ─► FastAPI pods ×2..6 (HPA on CPU)
@@ -68,8 +68,8 @@ gearloop/
 │   └── nginx.conf.template   SPA routing, /api proxy, security headers, /healthz
 ├── docker-compose.yml        postgres → migrate (one-shot) → backend → frontend
 ├── .github/workflows/ci-cd.yml
-├── terraform/                vpc.tf · iam.tf · eks.tf · variables.tf · outputs.tf · terraform.tfvars.example
-├── helm/gearloop/            chart + values-local.yaml (minikube) + values-eks.yaml + dashboards/gearloop.json
+├── terraform/                namespace.tf · monitoring.tf · app.tf · variables.tf · outputs.tf · terraform.tfvars.example
+├── helm/gearloop/            chart + values-local.yaml (minikube) + values-prod.yaml (GHCR images) + dashboards/gearloop.json
 ├── k8s/                      namespace (Pod Security restricted) + ResourceQuota/LimitRange
 ├── monitoring/               kube-prometheus-stack values
 ├── troubleshooting/          5 broken manifests + guided README
@@ -215,29 +215,41 @@ The app never runs pip, so the fix was to uninstall pip/setuptools/wheel from th
 
 <img src="screenshots/21-trivy-scan.png" alt="Trivy scan results">
 
-## 7. Terraform: AWS VPC + EKS (`terraform/`)
+## 7. Terraform: the cluster's setup as code (`terraform/`)
 
-| File | Creates |
+AWS is out of scope for this project, so Terraform targets the **local Kubernetes cluster** (minikube) through the
+official `kubernetes` and `helm` providers. That keeps Infrastructure as Code real: everything below was planned,
+applied, destroyed and applied again on this machine.
+
+| File | Manages |
 |---|---|
-| `vpc.tf` | VPC `10.42.0.0/16`, **2 public** + 2 private subnets across 2 AZs, IGW, optional single NAT gateway, route tables, ELB subnet tags |
-| `iam.tf` | cluster role, node role (incl. SSM instead of SSH), EBS CSI role for Pod Identity |
-| `eks.tf` | EKS cluster (API auth mode, creator gets admin), managed node group (2–4 × t3.medium), add-ons: vpc-cni, kube-proxy, coredns, pod-identity-agent, metrics-server (needed by the HPA), aws-ebs-csi-driver (needed by the Postgres PVC) |
+| `namespace.tf` | `gearloop` namespace with Pod Security `restricted` labels, `ResourceQuota`, `LimitRange` |
+| `monitoring.tf` | `monitoring` namespace + `kube-prometheus-stack` release (chart version pinned) |
+| `app.tf` | the `gearloop` Helm release from `../helm/gearloop`: image repo/tag, pull policy, ingress host, monitoring toggles; `atomic` so a failed rollout rolls back |
+| `variables.tf` · `outputs.tf` | kube context, images, values file, quota; outputs app/Grafana URLs and the release revision |
 
 ```bash
+./scripts/minikube-up.sh                  # starts minikube, builds images, then terraform init + apply
+# or step by step:
 cd terraform
-cp terraform.tfvars.example terraform.tfvars     # git-ignored; no credentials in it, ever
 terraform init
-terraform plan
-terraform apply                                  # ~15 min
-$(terraform output -raw configure_kubectl)       # aws eks update-kubeconfig ...
-terraform destroy                                # always, when done
+terraform plan -out=tf.plan               # 6 to add
+terraform apply tf.plan                   # ~40 s on minikube
+terraform destroy                         # removes releases, namespaces and the Postgres volume
 ```
 
-`use_nat_gateway = false` together with `node_capacity_type = "SPOT"` puts the nodes in public subnets with no NAT gateway, which is the cheapest setup for a short demo.
+Terraform owns the namespaces, so `destroy` also removes what Helm deliberately keeps on uninstall (the DB Secret and the
+Postgres PVC). The first version let Helm create the `monitoring` namespace, and `destroy` left it behind. It is now a
+Terraform resource too.
 
-<img src="screenshots/22-terraform-validate.png" alt="terraform validate" width="640">
+| `terraform plan` | `terraform apply` |
+|---|---|
+| <img src="screenshots/22a-terraform-plan.png" alt="terraform init, validate and plan"> | <img src="screenshots/22b-terraform-apply.png" alt="terraform apply"> |
 
-> `terraform plan`/`apply` need AWS credentials and were not run from this machine (see §13).
+<img src="screenshots/22c-terraform-destroy.png" alt="terraform destroy leaves no releases, namespaces or volumes" width="640">
+
+Use **either** Terraform **or** the manual `kubectl apply -f k8s/` + `helm upgrade --install` path below on a given cluster.
+Terraform expects to create the namespace itself.
 
 ## 8. Kubernetes + Helm (`helm/gearloop/`)
 
@@ -262,7 +274,8 @@ What the chart renders:
 | `NetworkPolicy` | only pods labelled `gearloop.io/db-client=true` (the backend) may open 5432 |
 | `ServiceMonitor` · `PrometheusRule` · dashboard `ConfigMap` | monitoring (when enabled) |
 
-Changing the image tag and running `helm upgrade` again does a rolling update. `helm rollback gearloop <rev> -n gearloop` goes back to an earlier release.
+This is the manual path (Terraform in §7 does the same thing declaratively). Changing the image tag and running
+`helm upgrade` again does a rolling update. `helm rollback gearloop <rev> -n gearloop` goes back to an earlier release.
 
 <img src="screenshots/23-kubectl-resources.png" alt="kubectl get pods,svc,ingress,hpa,pdb">
 
@@ -271,7 +284,7 @@ Changing the image tag and running `helm upgrade` again does a rolling update. `
 ### One-command local environment (minikube)
 
 ```bash
-./scripts/minikube-up.sh
+./scripts/minikube-up.sh                  # minikube + addons + images + terraform apply + helm test
 echo "$(minikube ip) gearloop.local grafana.gearloop.local" | sudo tee -a /etc/hosts
 ```
 
@@ -289,7 +302,7 @@ Moving the migration into the pod (an initContainer) removes the dependency on H
 
 ## 9. Ingress
 
-The Ingress resource is only configuration. The **ingress-nginx controller** (the minikube addon, or a Helm install on EKS)
+The Ingress resource is only configuration. The **ingress-nginx controller** (here the minikube addon)
 does the routing. The browser only ever talks to one origin, so there is no CORS and no backend hostname in the JS bundle.
 
 <img src="screenshots/34-app-via-ingress.png" alt="GearLoop served through the Ingress at gearloop.local">
@@ -308,7 +321,7 @@ watch kubectl get hpa,pods -n gearloop
 ```
 
 The HPA needs CPU **requests** on the pods (set in `values.yaml`) and a metrics source
-(the minikube `metrics-server` addon, or the EKS `metrics-server` add-on from Terraform).
+(here the minikube `metrics-server` addon).
 
 A real run on minikube: CPU jumped to 363 % of the request, and the HPA went 2 → 4 → 6 replicas within about 45 seconds.
 
@@ -319,6 +332,8 @@ A real run on minikube: CPU jumped to 363 % of the request, and the HPA went 2 �
 *Requests/s per backend pod: two pods take the first burst, then traffic spreads across the new replicas (Prometheus shows UTC).*
 
 ## 11. Monitoring
+
+Terraform installs this (`terraform/monitoring.tf`, same values file). The manual equivalent:
 
 ```bash
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -362,7 +377,7 @@ and Ingress pointing at the wrong Service port.
 | Prometheus / Grafana | ✅ both backend targets UP, 4 alert rules loaded, dashboard auto-imported with every panel populated |
 | Troubleshooting lab | ✅ all 5 manifests produce the documented symptom (ErrImagePull, no endpoints, readiness 503, OOMKilled 137, ingress 503) |
 | GitHub Actions | ⚠️ `actionlint` clean; needs a push to GitHub to actually run |
-| Terraform | ⚠️ `terraform validate` + `fmt` pass; `plan`/`apply` need AWS credentials (and cost money: EKS ≈ $0.10/h + nodes) |
+| Terraform | ✅ `plan` / `apply` / `destroy` / `apply` run against minikube; `destroy` leaves no releases, namespaces or volumes |
 
 ## 14. Final demo script
 
@@ -370,8 +385,8 @@ and Ingress pointing at the wrong Service port.
 2. Use `/docs` to do item CRUD; `kubectl exec -it gearloop-postgres-0 -n gearloop -- psql -U gearloop -c 'select * from loans'`.
 3. Change something visible, `git commit`, `git push`; watch CI go backend/frontend/infra → images → deploy.
 4. Show the SHA-tagged images in GHCR and the Trivy results in the Security tab.
-5. `terraform plan`, then the VPC + EKS in the AWS console.
+5. `terraform plan` / `apply`: Terraform creates the namespaces, quota and both Helm releases.
 6. `kubectl get pods,svc,ingress,hpa -n gearloop`, `helm list -n gearloop`, `helm history gearloop -n gearloop`.
 7. Run `load-test.sh` and watch the HPA scale; show the Grafana dashboard live.
 8. Apply a troubleshooting manifest and fix it live.
-9. `terraform destroy`.
+9. `terraform destroy`, then `kubectl get ns,pv` to show nothing is left.
