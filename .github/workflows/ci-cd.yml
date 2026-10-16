@@ -1,0 +1,211 @@
+name: GearLoop CI/CD
+
+# test  ->  build + scan (both images)  ->  push to GHCR (main only)  ->  deploy with Helm (main, opt-in)
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  TRIVY_VERSION: v0.76.0
+  HELM_VERSION: v3.22.0
+
+# Third-party actions are pinned to full commit SHAs (tags can be moved; SHAs cannot).
+jobs:
+  backend:
+    name: Backend - lint, migrate, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: gearloop
+          POSTGRES_USER: gearloop
+          POSTGRES_PASSWORD: gearloop
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gearloop" --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: |
+          ruff check --output-format=github .
+          ruff format --check .
+      - name: Apply migrations to a real PostgreSQL and check for model drift
+        env:
+          DATABASE_URL: postgresql+psycopg://gearloop:gearloop@localhost:5432/gearloop
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base && alembic upgrade head
+      - name: Run tests (pytest)
+        run: pytest -v --junitxml=pytest-report.xml
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pytest-report
+          path: backend/pytest-report.xml
+
+  frontend:
+    name: Frontend - test, build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  infra:
+    name: IaC - Helm + Terraform checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Helm lint + render every values file
+        run: |
+          for f in "" values-local.yaml values-eks.yaml; do
+            helm lint helm/gearloop ${f:+-f helm/gearloop/$f}
+            helm template gearloop helm/gearloop ${f:+-f helm/gearloop/$f} > /dev/null
+          done
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      - name: Terraform fmt + validate
+        working-directory: terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate
+
+  images:
+    name: Image - ${{ matrix.component }}
+    needs: [backend, frontend, infra]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write # upload Trivy SARIF to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compute image name (GHCR needs lower case)
+        id: img
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/gearloop-${{ matrix.component }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build (load locally for scanning)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.component }}
+          load: true
+          tags: ${{ steps.img.outputs.name }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          cache: true
+      - name: Trivy report (all severities, for the Security tab)
+        run: |
+          trivy image --format sarif --output trivy-${{ matrix.component }}.sarif \
+            ${{ steps.img.outputs.name }}:${{ github.sha }}
+      - name: Upload SARIF
+        if: always() && github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4
+        with:
+          sarif_file: trivy-${{ matrix.component }}.sarif
+          category: trivy-${{ matrix.component }}
+      - name: Trivy gate - fail on fixable HIGH/CRITICAL
+        run: |
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --format table ${{ steps.img.outputs.name }}:${{ github.sha }}
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push ${{ github.sha }} tag
+        if: github.event_name != 'pull_request'
+        run: docker push ${{ steps.img.outputs.name }}:${{ github.sha }}
+
+  deploy:
+    name: Deploy to Kubernetes (Helm)
+    needs: images
+    # Opt-in: set repository variable DEPLOY_ENABLED=true and secret KUBE_CONFIG_DATA (base64 kubeconfig)
+    # once the EKS cluster from terraform/ exists.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Configure kubectl
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+        run: |
+          mkdir -p ~/.kube
+          echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl version
+      - name: helm upgrade --install
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          kubectl apply -f k8s/namespace.yaml
+          helm upgrade --install gearloop ./helm/gearloop \
+            --namespace gearloop \
+            -f helm/gearloop/values-eks.yaml \
+            --set backend.image.repository=ghcr.io/$owner/gearloop-backend \
+            --set frontend.image.repository=ghcr.io/$owner/gearloop-frontend \
+            --set backend.image.tag=${{ github.sha }} \
+            --set frontend.image.tag=${{ github.sha }} \
+            --atomic --wait --timeout 10m
+      - name: Smoke test (helm test)
+        run: helm test gearloop -n gearloop --logs
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed \`${GITHUB_SHA::7}\`"
+            echo '```'
+            kubectl get deploy,hpa,ingress -n gearloop
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
