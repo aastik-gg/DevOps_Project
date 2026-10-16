@@ -8,7 +8,7 @@ This repository is my **Session 21 DevOps capstone**. It takes the app from a la
 to a monitored Kubernetes deployment:
 
 > React + Vite → FastAPI → PostgreSQL (SQLAlchemy + Alembic) → pytest → Docker → GitHub Actions →
-> Trivy → GHCR → Terraform → Helm → Kubernetes (minikube) → Ingress → HPA → Prometheus + Grafana → troubleshooting
+> Trivy → GHCR → GitOps (Argo CD) → Terraform → Helm → Kubernetes (minikube) → Ingress → HPA → Prometheus + Grafana → troubleshooting
 
 The DevOps layer follows the course architecture. The application domain, the code and these design choices are my own.
 
@@ -16,7 +16,8 @@ The DevOps layer follows the course architecture. The application domain, the co
 
 *All screenshots in this README were captured from the running app and cluster; the full set is in [`screenshots/`](screenshots).*
 
-**Presentation:** [`presentation/GearLoop-Capstone.pptx`](presentation/GearLoop-Capstone.pptx), 19 slides with speaker notes.
+**Demo material** is in [`demo/`](demo): the slide deck ([`presentation.pptx`](demo/presentation.pptx), also as
+[`slides.pdf`](demo/slides.pdf)) and the walkthrough video, recorded following [`demo/RECORDING-GUIDE.md`](demo/RECORDING-GUIDE.md).
 
 | Area | Course reference (TaskBoard) | GearLoop |
 |---|---|---|
@@ -28,7 +29,22 @@ The DevOps layer follows the course architecture. The application domain, the co
 | Containers | frontend runs as root | both images non-root (backend uid 10001, unprivileged nginx uid 101); read-only root FS in Kubernetes; pip removed from the runtime image |
 | Kubernetes | Deployment + Service | Pod Security `restricted` namespace, StatefulSet Postgres, PDBs, NetworkPolicy (only backend may reach Postgres), startup/readiness/liveness probes, `helm test` smoke test |
 | CI | single job, tag-pinned actions | parallel backend / frontend / IaC jobs, matrix image build, Trivy SARIF to the Security tab + blocking gate, all actions **pinned to commit SHAs** |
+| Deploy | `helm upgrade` from CI with a kubeconfig secret | **GitOps**: CI only commits the new image tag to Git; **Argo CD** inside the cluster pulls it, so CI never holds cluster credentials |
 | Terraform | AWS VPC + EKS modules | no cloud account needed: Terraform owns the **local cluster's** namespaces, quota and both Helm releases (monitoring + app), so `plan` / `apply` / `destroy` actually run, and `destroy` leaves nothing behind |
+
+## Tech stack
+
+| Layer | Tools |
+|---|---|
+| Frontend | React 19, Vite 8, plain CSS, vitest; served by nginx (unprivileged) |
+| Backend | Python 3.12, FastAPI, SQLAlchemy 2, Pydantic, Alembic, Uvicorn, prometheus-fastapi-instrumentator |
+| Database | PostgreSQL 17 |
+| Quality | pytest, ruff, `alembic check`, actionlint, helm lint, terraform validate |
+| Containers | Docker (multi-stage), Docker Compose, GitHub Container Registry |
+| CI/CD | GitHub Actions (SHA-pinned actions), Trivy, GitOps with Argo CD |
+| Infrastructure as Code | Terraform (kubernetes, helm, random providers) |
+| Kubernetes | minikube, Helm 3, ingress-nginx, metrics-server, HPA, PDB, NetworkPolicy, Pod Security Admission |
+| Observability | kube-prometheus-stack: Prometheus, Grafana, Alertmanager, ServiceMonitor, PrometheusRule |
 
 ---
 
@@ -39,11 +55,12 @@ The DevOps layer follows the course architecture. The application domain, the co
                                        ├─ backend : ruff · alembic upgrade/check on Postgres · pytest
                                        ├─ frontend: vitest · vite build
                                        ├─ infra   : helm lint/template · terraform fmt/validate
-                                       └─ images (matrix: backend, frontend)
-                                            build ─► Trivy (SARIF + HIGH/CRITICAL gate) ─► push ghcr.io/…:<commit-sha>
-                                                                                              │
-   Terraform (kubernetes + helm providers): namespaces, quota, kube-prometheus-stack, gearloop  │ helm upgrade --install
-                                                   │                                          ▼
+                                       ├─ images (matrix: backend, frontend)
+                                       │    build ─► Trivy (SARIF + HIGH/CRITICAL gate) ─► push ghcr.io/…:<commit-sha>
+                                       └─ gitops: commit the new <commit-sha> into helm/gearloop/values-gitops.yaml
+                                                                                              │ Argo CD polls Git
+   Terraform (kubernetes + helm providers): namespaces, quota, kube-prometheus-stack,          │ and syncs the chart
+   Argo CD + Application (or the gearloop release directly in helm mode)                      ▼
  Browser ─► Ingress (nginx) ─┬─ /            ─► frontend Service ─► nginx pods ×2 (React build)
                              └─ /api, /docs  ─► backend Service  ─► FastAPI pods ×2..6 (HPA on CPU)
                                                   initContainer: app.migrate ─┤            ▲
@@ -68,12 +85,16 @@ gearloop/
 │   └── nginx.conf.template   SPA routing, /api proxy, security headers, /healthz
 ├── docker-compose.yml        postgres → migrate (one-shot) → backend → frontend
 ├── .github/workflows/ci-cd.yml
-├── terraform/                namespace.tf · monitoring.tf · app.tf · variables.tf · outputs.tf · terraform.tfvars.example
-├── helm/gearloop/            chart + values-local.yaml (minikube) + values-prod.yaml (GHCR images) + dashboards/gearloop.json
+├── terraform/                namespace.tf · monitoring.tf · app.tf · argocd.tf · variables.tf · outputs.tf · terraform.tfvars.example
+├── helm/gearloop/            chart + values-local.yaml (minikube) + values-gitops.yaml (Argo CD, tags bumped by CI)
+│                             + values-prod.yaml (GHCR images) + dashboards/gearloop.json
+├── gitops/                   Argo CD values + the GearLoop Application manifest
 ├── k8s/                      namespace (Pod Security restricted) + ResourceQuota/LimitRange
 ├── monitoring/               kube-prometheus-stack values
 ├── troubleshooting/          5 broken manifests + guided README
-└── scripts/                  minikube-up.sh · load-test.sh
+├── scripts/                  minikube-up.sh · load-test.sh
+├── screenshots/              every screenshot used in this README
+└── demo/                     presentation.pptx · slides.pdf · walkthrough video · RECORDING-GUIDE.md
 ```
 
 ---
@@ -182,18 +203,17 @@ container, and `alembic check` fails the build if the models and migrations disa
 
 ```text
 backend ─┐
-frontend ├─► images [backend, frontend] ─► deploy (main only, opt-in)
-infra ───┘     build → Trivy SARIF → Trivy gate → push :<sha>
+frontend ├─► images [backend, frontend] ──────────────────────► gitops (main only)
+infra ───┘     build → Trivy SARIF → Trivy gate → push :<sha>     bump tags in values-gitops.yaml, commit [skip ci]
 ```
 
 * Runs on every push and PR to `main`. Images are **pushed only from `main`**, tagged with the full commit SHA (never `latest`).
 * Every action is pinned to a commit SHA, so a hijacked tag cannot change what runs.
-* Deploy needs two things in the repo settings once the cluster exists:
-  * variable `DEPLOY_ENABLED=true`
-  * secret `KUBE_CONFIG_DATA` = `base64 -w0 ~/.kube/config`
-
-  It then runs `helm upgrade --install --atomic --wait` and `helm test`. Without those settings the job is skipped and the pipeline stays green.
-* GHCR packages are private by default. Make them public, or give the cluster an `imagePullSecret`.
+* **Deployment is pull-based (GitOps).** The `gitops` job rewrites the two image tags in `helm/gearloop/values-gitops.yaml`
+  to the commit SHA and pushes that commit back to `main` with `[skip ci]` (so it does not trigger another run).
+  Argo CD, running inside the cluster, sees the commit and rolls the Deployments (§8). CI never needs cluster
+  credentials, which is what makes this work with a laptop cluster that GitHub cannot reach.
+* GHCR packages are private by default. Make both packages public (package settings → visibility), or give the cluster an `imagePullSecret`.
 
 Every change is a small, conventional commit, so the history doubles as a change log for the pipeline to build from:
 
@@ -226,7 +246,8 @@ applied, destroyed and applied again on this machine.
 | `namespace.tf` | `gearloop` namespace with Pod Security `restricted` labels, `ResourceQuota`, `LimitRange` |
 | `monitoring.tf` | `monitoring` namespace + `kube-prometheus-stack` release (chart version pinned) |
 | `app.tf` | the `gearloop` Helm release from `../helm/gearloop`: image repo/tag, pull policy, ingress host, monitoring toggles; `atomic` so a failed rollout rolls back |
-| `variables.tf` · `outputs.tf` | kube context, images, values file, quota; outputs app/Grafana URLs and the release revision |
+| `argocd.tf` | only in `deploy_mode = "argocd"`: `argocd` namespace, Argo CD release, the DB Secret (random password) and the GearLoop `Application` (§8) |
+| `variables.tf` · `outputs.tf` | deploy mode, kube context, images, values file, quota, GitOps repo/revision; outputs app/Grafana URLs and the release revision |
 
 ```bash
 ./scripts/minikube-up.sh                  # starts minikube, builds images, then terraform init + apply
@@ -251,7 +272,51 @@ Terraform resource too.
 Use **either** Terraform **or** the manual `kubectl apply -f k8s/` + `helm upgrade --install` path below on a given cluster.
 Terraform expects to create the namespace itself.
 
-## 8. Kubernetes + Helm (`helm/gearloop/`)
+## 8. GitOps with Argo CD (`gitops/`, `terraform/argocd.tf`)
+
+Terraform has two deploy modes:
+
+| `deploy_mode` | Who deploys the GearLoop chart |
+|---|---|
+| `helm` (default) | Terraform installs the release directly. Works with no Git remote. |
+| `argocd` | Terraform installs **Argo CD** and one `Application`; Argo CD deploys `helm/gearloop` from GitHub with `values-gitops.yaml`, and keeps it in sync |
+
+```bash
+# after the repo is on GitHub and CI has pushed the first images (packages public):
+cd terraform
+terraform destroy                                   # switching modes: the DB Secret and volume differ
+terraform apply -var deploy_mode=argocd
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+# UI: http://argocd.gearloop.local  (user admin)
+```
+
+Sync policy is **automated with prune and self-heal**: a commit to Git changes the cluster, a resource deleted from Git is
+deleted from the cluster, and a manual `kubectl` change is reverted. The database password never goes into Git:
+Argo CD renders charts without cluster access (so the chart's generated password would change on every sync), so in this
+mode Terraform creates the `gearloop-db` Secret with a random password and the chart uses it via `postgres.existingSecret`.
+
+**Tested locally before the GitHub push.** The same Application was pointed at a throwaway Git server on this machine
+(smart HTTP via `git http-backend`), using the locally built images:
+
+1. `terraform apply` in `argocd` mode: 10 resources; the first sync was *Synced / Healthy* in about 95 s.
+2. A commit that set the frontend to 3 replicas was pushed to that repo. Argo CD synced it on its own in 18 s.
+3. `kubectl scale deploy gearloop-frontend --replicas=1` was reverted to 3 by self-heal in 2 s.
+4. `terraform destroy` removed everything, including the Application (its finalizer cleaned up the app first).
+
+<img src="screenshots/38-terraform-argocd-mode.png" alt="terraform apply in argocd mode" width="760">
+
+| Argo CD: application Synced / Healthy | Resource tree |
+|---|---|
+| <img src="screenshots/35-argocd-applications.png" alt="Argo CD applications view"> | <img src="screenshots/36-argocd-app-tree.png" alt="Argo CD resource tree"> |
+
+| Sync history: two Git revisions | Push → sync → self-heal |
+|---|---|
+| <img src="screenshots/37-argocd-history.png" alt="Argo CD sync history"> | <img src="screenshots/39-gitops-sync-selfheal.png" alt="GitOps sync and self-heal timings"> |
+
+*These screenshots show the local test repository URL; once the repo is pushed, the Application tracks
+`https://github.com/aastik-gg/gearloop.git`.*
+
+## 9. Kubernetes + Helm (`helm/gearloop/`)
 
 ```bash
 kubectl apply -f k8s/                                         # namespace (PSA restricted) + quota
@@ -274,7 +339,7 @@ What the chart renders:
 | `NetworkPolicy` | only pods labelled `gearloop.io/db-client=true` (the backend) may open 5432 |
 | `ServiceMonitor` · `PrometheusRule` · dashboard `ConfigMap` | monitoring (when enabled) |
 
-This is the manual path (Terraform in §7 does the same thing declaratively). Changing the image tag and running
+This is the manual path (Terraform in §7 and Argo CD in §8 do the same thing declaratively). Changing the image tag and running
 `helm upgrade` again does a rolling update. `helm rollback gearloop <rev> -n gearloop` goes back to an earlier release.
 
 <img src="screenshots/23-kubectl-resources.png" alt="kubectl get pods,svc,ingress,hpa,pdb">
@@ -300,7 +365,7 @@ Moving the migration into the pod (an initContainer) removes the dependency on H
 `app/migrate.py` makes it safe with any number of replicas. That was tested with 4 concurrent runs against Postgres:
 1 migrated and seeded, and 3 waited and skipped.
 
-## 9. Ingress
+## 10. Ingress
 
 The Ingress resource is only configuration. The **ingress-nginx controller** (here the minikube addon)
 does the routing. The browser only ever talks to one origin, so there is no CORS and no backend hostname in the JS bundle.
@@ -313,7 +378,7 @@ The frontend's nginx resolves the backend Service **per request** (`resolver` + 
 Without that, a node restart made nginx exit with `host not found in upstream` before CoreDNS was ready, and the
 frontend crash-looped until DNS came back.
 
-## 10. HPA
+## 11. HPA
 
 ```bash
 ./scripts/load-test.sh                         # in-cluster busybox workers hammering /api
@@ -331,7 +396,7 @@ A real run on the Terraform-managed deployment: CPU jumped to 438 % of the reque
 
 *Requests/s per backend pod: two pods take the first burst, then traffic spreads across the new replicas (Prometheus shows UTC).*
 
-## 11. Monitoring
+## 12. Monitoring
 
 Terraform installs this (`terraform/monitoring.tf`, same values file). The manual equivalent:
 
@@ -354,7 +419,7 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 
 <img src="screenshots/31-metrics-endpoint.png" alt="Backend /metrics output">
 
-## 12. Troubleshooting lab
+## 13. Troubleshooting lab
 
 [`troubleshooting/README.md`](troubleshooting/README.md) has five broken scenarios, each with symptom, diagnosis and fix:
 ImagePullBackOff, Service with no endpoints, Running-but-not-Ready (bad DB secret), OOMKilled (exit 137),
@@ -362,7 +427,7 @@ and Ingress pointing at the wrong Service port.
 
 <img src="screenshots/32-troubleshooting-lab.png" alt="Troubleshooting scenarios and their symptoms">
 
-## 13. What has actually been verified
+## 14. What has actually been verified
 
 | Area | Status |
 |---|---|
@@ -378,15 +443,39 @@ and Ingress pointing at the wrong Service port.
 | Troubleshooting lab | ✅ all 5 manifests produce the documented symptom (ErrImagePull, no endpoints, readiness 503, OOMKilled 137, ingress 503) |
 | GitHub Actions | ⚠️ `actionlint` clean; needs a push to GitHub to actually run |
 | Terraform | ✅ `plan` / `apply` / `destroy` / `apply` run against minikube; `destroy` leaves no releases, namespaces or volumes |
+| Argo CD (GitOps) | ✅ against a local Git server: auto-sync of a pushed commit in 18 s, self-heal in 2 s, clean destroy. ⚠️ Against GitHub only after the push |
 
-## 14. Final demo script
+## 15. Known issues and limitations
 
-1. Open the app, check out an item, watch the summary strip and activity feed update.
-2. Use `/docs` to do item CRUD; `kubectl exec -it gearloop-postgres-0 -n gearloop -- psql -U gearloop -c 'select * from loans'`.
-3. Change something visible, `git commit`, `git push`; watch CI go backend/frontend/infra → images → deploy.
-4. Show the SHA-tagged images in GHCR and the Trivy results in the Security tab.
-5. `terraform plan` / `apply`: Terraform creates the namespaces, quota and both Helm releases.
-6. `kubectl get pods,svc,ingress,hpa -n gearloop`, `helm list -n gearloop`, `helm history gearloop -n gearloop`.
-7. Run `load-test.sh` and watch the HPA scale; show the Grafana dashboard live.
-8. Apply a troubleshooting manifest and fix it live.
-9. `terraform destroy`, then `kubectl get ns,pv` to show nothing is left.
+* **No cloud deployment.** AWS is out of scope for this project, so Terraform manages a local minikube cluster instead of
+  provisioning a VPC and EKS. The chart and pipeline are cluster-agnostic (`values-prod.yaml`), but they were not run on a cloud provider.
+* **CI, GHCR and Argo CD-from-GitHub run only after the push.** The workflow is `actionlint`-clean and every step was run
+  locally, but the first green GitHub Actions run, the SHA-tagged GHCR packages and the GitHub-backed Argo CD sync happen once the repository is on GitHub.
+* **`values-gitops.yaml` starts with the tag `bootstrap`.** Until the first CI run on `main` replaces it, Argo CD mode
+  shows `ImagePullBackOff`. GHCR packages are private by default; make them public or add an `imagePullSecret`.
+* **Single-node demo database.** PostgreSQL runs as one StatefulSet replica on a minikube hostPath volume, with no
+  backups or replication. A real deployment would use a managed database (`postgres.enabled=false` + `postgres.externalUrl`).
+* **Plain HTTP locally.** Ingress, Grafana and Argo CD are served over HTTP on `*.gearloop.local` hosts that must be added to
+  `/etc/hosts`. The chart supports TLS (`ingress.tls`), but no certificates are configured.
+* **Demo credentials.** Grafana's admin password is a demo value in `monitoring/kube-prometheus-stack-values.yaml`, and
+  `values-local.yaml` uses a fixed local DB password. Neither is used in Argo CD mode for the database, but change both for anything shared.
+* **CRDs survive `terraform destroy`.** Helm intentionally leaves the Prometheus Operator and Argo CD CRDs installed.
+  Everything else (namespaces, releases, Secrets, volumes) is removed.
+* **One transient delete error.** During the first mode switch, `terraform destroy` once reported a Kubernetes delete
+  error. Running it again finished cleanly, and the error did not recur in any later run.
+* **Seeded demo data.** An empty database is seeded with 10 items and 3 loans on first start (`--seed`). Turn this off with
+  `migrations.seedDemoData=false`.
+
+## 16. Video walkthrough order
+
+The walkthrough video follows the order the rubric asks for. The step-by-step script with the exact commands is
+[`demo/RECORDING-GUIDE.md`](demo/RECORDING-GUIDE.md).
+
+1. Slides: what GearLoop is, tech stack, architecture.
+2. Codebase: folder structure, key files.
+3. CI/CD: push a change and show the GitHub Actions run go green end to end (tests → images → Trivy → GHCR → gitops commit).
+4. Terraform: `terraform plan` and `apply` against minikube (and the note that AWS is out of scope).
+5. Argo CD: the synced application, then the GitOps flow (the CI commit gets deployed, and self-heal reverts a manual change).
+6. Kubernetes: `kubectl get pods,svc,ingress,hpa`, and the app through the Ingress.
+7. Prometheus: Targets page with the app `UP`.
+8. Grafana: the live GearLoop dashboard (run `scripts/load-test.sh` for traffic and HPA scaling).
