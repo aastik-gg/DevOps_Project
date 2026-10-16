@@ -1,0 +1,36 @@
+# helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+#   -n monitoring --create-namespace -f monitoring/kube-prometheus-stack-values.yaml
+
+prometheus:
+  prometheusSpec:
+    # Pick up ServiceMonitors / PrometheusRules from every namespace, not only ones labelled for this release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    ruleSelectorNilUsesHelmValues: false
+    ruleNamespaceSelector: {}
+    retention: 3d
+    resources:
+      requests: {cpu: 200m, memory: 512Mi}
+
+grafana:
+  adminPassword: change-me-gearloop   # demo only; use grafana.admin.existingSecret for anything real
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard     # the GearLoop chart's dashboard ConfigMap carries this label
+      searchNamespace: ALL
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts: [grafana.gearloop.local]
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+
+# Small clusters (minikube): these control-plane targets are not reachable and only add noise.
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}

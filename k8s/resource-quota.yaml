@@ -1,0 +1,25 @@
+# Guard rail for a shared cluster: the whole GearLoop namespace can never grab more than this.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gearloop-quota
+  namespace: gearloop
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 4Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    persistentvolumeclaims: "4"
+    pods: "30"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: gearloop-defaults
+  namespace: gearloop
+spec:
+  limits:
+    - type: Container
+      default: {cpu: 250m, memory: 256Mi}
+      defaultRequest: {cpu: 50m, memory: 64Mi}
