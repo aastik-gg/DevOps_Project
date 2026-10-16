@@ -34,3 +34,6 @@ helm/*/charts/
 .DS_Store
 .idea/
 .vscode/
+
+# Terraform helm provider private cache
+terraform/.helm/

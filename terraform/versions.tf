@@ -28,4 +28,8 @@ provider "helm" {
     config_path    = pathexpand(var.kubeconfig_path)
     config_context = var.kube_context
   }
+  # Private repo config/cache: charts resolve the same on every machine, whatever is
+  # (or is broken) in the user's own ~/.config/helm.
+  repository_config_path = "${path.module}/.helm/repositories.yaml"
+  repository_cache       = "${path.module}/.helm/cache"
 }
