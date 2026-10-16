@@ -264,8 +264,24 @@
         "defaults": {
           "unit": "percentunit",
           "color": {
-            "mode": "fixed",
-            "fixedColor": "dark-red"
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
           }
         },
         "overrides": []
@@ -282,7 +298,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(http_requests_total{job=~\"$job\",status=\"5xx\"}[5m])) / clamp_min(sum(rate(http_requests_total{job=~\"$job\"}[5m])), 1e-9)"
+          "expr": "(sum(rate(http_requests_total{job=~\"$job\",status=\"5xx\"}[5m])) or vector(0)) / clamp_min(sum(rate(http_requests_total{job=~\"$job\"}[5m])), 1e-9)"
         }
       ]
     },
@@ -427,8 +443,8 @@
     },
     {
       "id": 10,
-      "type": "timeseries",
-      "title": "Checkouts per hour by category",
+      "type": "bargauge",
+      "title": "Checkouts in the last 24h by category",
       "gridPos": {
         "x": 12,
         "y": 12,
@@ -442,29 +458,30 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": {
-            "fillOpacity": 10,
-            "stacking": {
-              "mode": "normal"
-            }
+          "min": 0,
+          "color": {
+            "mode": "continuous-BlYlRd"
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
         },
-        "tooltip": {
-          "mode": "multi"
-        }
+        "noValue": "No checkouts in 24h"
       },
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (category) (increase(gearloop_checkouts_total{job=~\"$job\"}[1h]))",
-          "legendFormat": "{{category}}"
+          "expr": "max by (category) (gearloop_checkouts_last_24h{job=~\"$job\"})",
+          "legendFormat": "{{category}}",
+          "instant": true
         }
       ]
     },
@@ -529,9 +546,9 @@
         "defaults": {
           "unit": "short",
           "custom": {
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "stacking": {
-              "mode": "normal"
+              "mode": "none"
             }
           }
         },
