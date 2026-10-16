@@ -1,0 +1,25 @@
+# Scenario 5: the UI loads through the Ingress, but every API call returns 503 from nginx.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gearloop-beta
+  namespace: gearloop
+  labels: {lab: troubleshooting}
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: beta.gearloop.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: gearloop-backend
+                port: {number: 8080}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gearloop-frontend
+                port: {number: 80}

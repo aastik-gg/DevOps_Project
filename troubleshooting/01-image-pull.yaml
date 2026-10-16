@@ -1,0 +1,21 @@
+# Scenario 1: the pod never starts.
+# kubectl apply -f troubleshooting/01-image-pull.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gearloop-canary
+  namespace: gearloop
+  labels: {lab: troubleshooting}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: gearloop-canary}
+  template:
+    metadata:
+      labels: {app: gearloop-canary}
+    spec:
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: backend
+          image: ghcr.io/aastik-gg/gearloop-backend:v9.9.9-typo
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}

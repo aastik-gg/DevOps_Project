@@ -1,0 +1,26 @@
+# Scenario 4: the pod keeps restarting with an exit code you did not expect.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gearloop-report-worker
+  namespace: gearloop
+  labels: {lab: troubleshooting}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: gearloop-report-worker}
+  template:
+    metadata:
+      labels: {app: gearloop-report-worker}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: worker
+          image: gearloop-backend:local
+          imagePullPolicy: IfNotPresent
+          # Simulates building a large usage report in memory.
+          command: ["python", "-c", "import time; blob = bytearray(200 * 1024 * 1024); time.sleep(3600)"]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 96Mi}

@@ -1,0 +1,15 @@
+# Scenario 2: the Service exists, DNS resolves, but every request times out / is refused.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gearloop-api-internal
+  namespace: gearloop
+  labels: {lab: troubleshooting}
+spec:
+  selector:
+    app.kubernetes.io/name: gearloop
+    app.kubernetes.io/component: api        # <- what is the real component label?
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
