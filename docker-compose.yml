@@ -21,7 +21,7 @@ services:
   migrate:
     build: ./backend
     image: gearloop-backend:local
-    command: ["sh", "-c", "alembic upgrade head && python -m app.seed"]
+    command: ["python", "-m", "app.migrate", "--seed"]
     environment:
       DATABASE_URL: postgresql+psycopg://gearloop:${POSTGRES_PASSWORD:-gearloop}@postgres:5432/gearloop
     depends_on:

@@ -14,10 +14,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              {{- include "gearloop.selectorLabels" (dict "ctx" . "component" "backend") | nindent 14 }}
-        - podSelector:
-            matchLabels:
-              {{- include "gearloop.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 14 }}
+              gearloop.io/db-client: "true"
       ports:
         - port: 5432
 {{- end }}

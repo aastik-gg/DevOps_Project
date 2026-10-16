@@ -53,11 +53,11 @@ jobs:
         run: |
           ruff check --output-format=github .
           ruff format --check .
-      - name: Apply migrations to a real PostgreSQL and check for model drift
+      - name: Migrate a real PostgreSQL (same entrypoint as the pods), check drift, test downgrade
         env:
           DATABASE_URL: postgresql+psycopg://gearloop:gearloop@localhost:5432/gearloop
         run: |
-          alembic upgrade head
+          python -m app.migrate --seed
           alembic check
           alembic downgrade base && alembic upgrade head
       - name: Run tests (pytest)

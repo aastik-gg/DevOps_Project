@@ -24,8 +24,7 @@ frontend:
     requests: {cpu: 25m, memory: 32Mi}
     limits: {cpu: 200m, memory: 128Mi}
 
-# Runs `alembic upgrade head` as a Helm hook Job (post-install, pre-upgrade)
-# so replicas never race each other on migrations.
+# Backend initContainer runs `python -m app.migrate` (Alembic under a Postgres advisory lock).
 migrations:
   enabled: true
   seedDemoData: true   # load demo equipment if the inventory is empty
@@ -62,7 +61,7 @@ pdb:
   minAvailable: 1
 
 networkPolicy:
-  enabled: true        # only backend + migration Job may reach Postgres
+  enabled: true        # only pods labelled gearloop.io/db-client=true may reach Postgres
 
 monitoring:
   serviceMonitor:

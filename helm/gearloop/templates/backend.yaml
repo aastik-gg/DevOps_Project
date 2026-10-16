@@ -21,6 +21,7 @@ spec:
       labels:
         {{- include "gearloop.labels" . | nindent 8 }}
         {{- include "gearloop.selectorLabels" (dict "ctx" . "component" "backend") | nindent 8 }}
+        gearloop.io/db-client: "true"
       annotations:
         # Roll pods when DB credentials change.
         checksum/db-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
@@ -38,6 +39,22 @@ spec:
           labelSelector:
             matchLabels:
               {{- include "gearloop.selectorLabels" (dict "ctx" . "component" "backend") | nindent 14 }}
+      {{- if .Values.migrations.enabled }}
+      initContainers:
+        # Every new pod brings the schema to head before it serves traffic. app.migrate holds a
+        # Postgres advisory lock, so parallel pods take turns and only the first one does any work.
+        - name: migrate
+          image: {{ include "gearloop.image" (dict "ctx" . "image" .Values.backend.image) }}
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          command: ["python", "-m", "app.migrate"{{ if .Values.migrations.seedDemoData }}, "--seed"{{ end }}]
+          env:
+            - name: DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ include "gearloop.dbSecret" . }}, key: database-url}}
+          securityContext:
+            {{- include "gearloop.containerSecurityContext" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: backend
           image: {{ include "gearloop.image" (dict "ctx" . "image" .Values.backend.image) }}
