@@ -323,7 +323,7 @@ watch kubectl get hpa,pods -n gearloop
 The HPA needs CPU **requests** on the pods (set in `values.yaml`) and a metrics source
 (here the minikube `metrics-server` addon).
 
-A real run on minikube: CPU jumped to 363 % of the request, and the HPA went 2 → 4 → 6 replicas within about 45 seconds.
+A real run on the Terraform-managed deployment: CPU jumped to 438 % of the request, and the HPA went 2 → 4 → 6 replicas within about 45 seconds.
 
 <img src="screenshots/26-hpa-autoscaling.png" alt="HPA scaling from 2 to 6 replicas">
 
@@ -348,7 +348,7 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 
 <img src="screenshots/27-grafana-dashboard.png" alt="Grafana dashboard">
 
-| Prometheus targets: every backend pod `UP` | Alert rules (the load test pushed p95 over 500 ms → *pending*) |
+| Prometheus targets: all 6 backend pods `UP` | The 4 GearLoop alert rules (the overdue-equipment alert is *pending*) |
 |---|---|
 | <img src="screenshots/28-prometheus-targets.png" alt="Prometheus targets"> | <img src="screenshots/29-prometheus-alerts.png" alt="Prometheus alerts"> |
 
@@ -371,7 +371,7 @@ and Ingress pointing at the wrong Service port.
 | UI | ✅ every dialog clicked through in headless Chrome against the real stack (add, check out, return, edit, duplicate-tag error, delete, filters); no horizontal scroll at 390px |
 | Docker | ✅ `docker compose up --build` brings up all 4 services; both images run non-root |
 | Trivy | ✅ both images clean for fixable HIGH/CRITICAL with Trivy 0.76 (after removing pip, see §6) |
-| Helm on minikube | ✅ install, 3 upgrades, rolling restart of 6 pods, `helm test` passes; Pod Security `restricted` namespace accepted every pod |
+| Helm on minikube | ✅ installed by Terraform (earlier also by hand: install, 4 upgrades, rolling restart of 6 pods); `helm test` passes; Pod Security `restricted` namespace accepted every pod |
 | Ingress | ✅ `/`, `/api`, `/docs` routed through ingress-nginx |
 | HPA | ✅ `load-test.sh` scaled the backend 2 → 4 → 6 |
 | Prometheus / Grafana | ✅ both backend targets UP, 4 alert rules loaded, dashboard auto-imported with every panel populated |
