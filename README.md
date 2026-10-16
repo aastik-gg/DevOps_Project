@@ -4,7 +4,7 @@ GearLoop tracks shared lab equipment: oscilloscopes, cameras, dev kits, tools.
 Staff register items. Students check them out for a set number of days and return them.
 The desk sees what is available, what is on loan, what is **overdue**, and what is waiting for repair.
 
-This repository is my **Session 21 DevOps capstone**. It takes the app from a laptop
+This repository is my **DevOps capstone project**. It takes the app from a laptop
 to a monitored Kubernetes deployment:
 
 > React + Vite → FastAPI → PostgreSQL (SQLAlchemy + Alembic) → pytest → Docker → GitHub Actions →
