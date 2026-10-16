@@ -17,7 +17,7 @@ The DevOps layer follows the course architecture. The application domain, the co
 *All screenshots in this README were captured from the running app and cluster; the full set is in [`screenshots/`](screenshots).*
 
 **Demo material** is in [`demo/`](demo): the slide deck ([`presentation.pptx`](demo/presentation.pptx), also as
-[`slides.pdf`](demo/slides.pdf)) and the walkthrough video, recorded following [`demo/RECORDING-GUIDE.md`](demo/RECORDING-GUIDE.md).
+[`slides.pdf`](demo/slides.pdf)) and the walkthrough video ([`presentation.mp4`](demo/presentation.mp4)).
 
 | Area | Course reference (TaskBoard) | GearLoop |
 |---|---|---|
@@ -94,7 +94,7 @@ gearloop/
 ├── troubleshooting/          5 broken manifests + guided README
 ├── scripts/                  minikube-up.sh · load-test.sh
 ├── screenshots/              every screenshot used in this README
-└── demo/                     presentation.pptx · slides.pdf · walkthrough video · RECORDING-GUIDE.md
+└── demo/                     presentation.pptx · slides.pdf · presentation.mp4 (walkthrough video)
 ```
 
 ---
@@ -314,7 +314,7 @@ mode Terraform creates the `gearloop-db` Secret with a random password and the c
 | <img src="screenshots/37-argocd-history.png" alt="Argo CD sync history"> | <img src="screenshots/39-gitops-sync-selfheal.png" alt="GitOps sync and self-heal timings"> |
 
 *These screenshots show the local test repository URL; once the repo is pushed, the Application tracks
-`https://github.com/aastik-gg/gearloop.git`.*
+`https://github.com/aastik-gg/DevOps_Project.git`.*
 
 ## 9. Kubernetes + Helm (`helm/gearloop/`)
 
@@ -468,8 +468,7 @@ and Ingress pointing at the wrong Service port.
 
 ## 16. Video walkthrough order
 
-The walkthrough video follows the order the rubric asks for. The step-by-step script with the exact commands is
-[`demo/RECORDING-GUIDE.md`](demo/RECORDING-GUIDE.md).
+The walkthrough video ([`demo/presentation.mp4`](demo/presentation.mp4)) follows the order the rubric asks for, with on-screen captions describing each step:
 
 1. Slides: what GearLoop is, tech stack, architecture.
 2. Codebase: folder structure, key files.

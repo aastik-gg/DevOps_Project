@@ -101,7 +101,7 @@ variable "quota" {
 variable "gitops_repo_url" {
   description = "Git repository Argo CD deploys from"
   type        = string
-  default     = "https://github.com/aastik-gg/gearloop.git"
+  default     = "https://github.com/aastik-gg/DevOps_Project.git"
 }
 
 variable "gitops_revision" {

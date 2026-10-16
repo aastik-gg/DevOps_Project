@@ -15,7 +15,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/aastik-gg/gearloop.git
+    repoURL: https://github.com/aastik-gg/DevOps_Project.git
     targetRevision: main
     path: helm/gearloop
     helm:
