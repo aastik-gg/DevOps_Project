@@ -1,0 +1,54 @@
+name: gearloop
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: gearloop
+      POSTGRES_USER: gearloop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gearloop}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gearloop -d gearloop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: apply Alembic migrations, load demo data on an empty DB, then exit.
+  migrate:
+    build: ./backend
+    image: gearloop-backend:local
+    command: ["sh", "-c", "alembic upgrade head && python -m app.seed"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://gearloop:${POSTGRES_PASSWORD:-gearloop}@postgres:5432/gearloop
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build: ./backend
+    image: gearloop-backend:local
+    environment:
+      DATABASE_URL: postgresql+psycopg://gearloop:${POSTGRES_PASSWORD:-gearloop}@postgres:5432/gearloop
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    image: gearloop-frontend:local
+    environment:
+      API_UPSTREAM: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:8080"
+
+volumes:
+  postgres-data:
