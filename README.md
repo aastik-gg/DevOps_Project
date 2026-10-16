@@ -12,6 +12,10 @@ to a monitored Kubernetes deployment:
 
 The DevOps layer follows the course architecture. The application domain, the code and these design choices are my own.
 
+![GearLoop dashboard](screenshots/01-dashboard.png)
+
+*All screenshots in this README were captured from the running app and cluster; the full set is in [`screenshots/`](screenshots).*
+
 | Area | Course reference (TaskBoard) | GearLoop |
 |---|---|---|
 | Domain | single `tasks` table | `items` + `loans` (one-to-many), derived status (available / on loan / overdue / maintenance) |
@@ -93,11 +97,30 @@ gearloop/
 
 Swagger UI: `/docs`.
 
+| Interactive API docs | Checking out an item from Swagger (201 Created) |
+|---|---|
+| <img src="screenshots/16-swagger-docs.png" alt="Swagger docs"> | <img src="screenshots/17-swagger-checkout.png" alt="Swagger checkout request"> |
+
 ### UI
 
 A light, card-based "equipment desk". It has a status summary strip with a utilisation bar, filter chips, search,
 check-out / return / edit / delete dialogs, a recent-activity panel, toasts for API errors, and loading/empty/offline
 states. It is responsive down to 360px.
+
+| | |
+|---|---|
+| **Filter by status** (overdue) | **Search** across name, tag and category |
+| <img src="screenshots/03-filter-overdue.png" alt="Overdue filter"> | <img src="screenshots/04-search.png" alt="Search"> |
+| **Register equipment** | **Check out** to a borrower for 1–30 days |
+| <img src="screenshots/05-add-equipment-dialog.png" alt="Add equipment dialog"> | <img src="screenshots/07-checkout-dialog.png" alt="Checkout dialog"> |
+| **On loan**: borrower, due date, activity feed, toast | **Return**: in-app confirm, no browser `confirm()` |
+| <img src="screenshots/08-checked-out.png" alt="Item checked out"> | <img src="screenshots/09-return-confirm.png" alt="Return confirmation"> |
+| **Edit**: *Needs repair* moves the item to Maintenance | **API errors surface as toasts** (duplicate asset tag → 409) |
+| <img src="screenshots/10-edit-dialog.png" alt="Edit dialog"> | <img src="screenshots/11-validation-error.png" alt="Duplicate asset tag error"> |
+| **Delete** (blocked by the API while on loan) | **Backend down**: clear error state with Retry |
+| <img src="screenshots/12-delete-confirm.png" alt="Delete confirmation"> | <img src="screenshots/15-backend-offline.png" alt="Backend offline state"> |
+
+<p align="center"><img src="screenshots/13-mobile.png" alt="Mobile view" width="280">&nbsp;&nbsp;<img src="screenshots/14-mobile-checkout.png" alt="Mobile checkout" width="280"><br><em>Mobile (390px): stacked summary, scrollable filter chips, full-width dialogs</em></p>
 
 ## 2. Run locally with Docker Compose
 
@@ -115,6 +138,8 @@ docker compose up --build
 
 The `migrate` service runs `python -m app.migrate --seed` once and exits.
 `backend` starts only after it finishes successfully, and `frontend` starts only after the backend is healthy.
+
+<img src="screenshots/20-docker-compose.png" alt="docker compose up output">
 
 ### Without Docker
 
@@ -140,6 +165,10 @@ cd frontend && npm test        # vitest: date/overdue formatting helpers
 The tests never touch PostgreSQL. CI separately runs the real Alembic migrations against a Postgres service
 container, and `alembic check` fails the build if the models and migrations disagree.
 
+<img src="screenshots/18-pytest.png" alt="pytest output">
+
+<img src="screenshots/19-frontend-tests-build.png" alt="vitest and vite build" width="640">
+
 ## 4. Docker images
 
 | Image | Base | User | Notes |
@@ -164,6 +193,10 @@ infra ───┘     build → Trivy SARIF → Trivy gate → push :<sha>
   It then runs `helm upgrade --install --atomic --wait` and `helm test`. Without those settings the job is skipped and the pipeline stays green.
 * GHCR packages are private by default. Make them public, or give the cluster an `imagePullSecret`.
 
+Every change is a small, conventional commit, so the history doubles as a change log for the pipeline to build from:
+
+<img src="screenshots/33-git-history.png" alt="git log" width="760">
+
 ## 6. Security scanning (Trivy)
 
 Each image is scanned twice:
@@ -177,6 +210,8 @@ What the gate caught while building this project: the first backend image had **
 
 None of them came from GearLoop's own dependencies. They were copies **vendored inside pip itself**, in the base image and in the venv.
 The app never runs pip, so the fix was to uninstall pip/setuptools/wheel from the runtime image instead of suppressing the findings. Both images now scan clean.
+
+<img src="screenshots/21-trivy-scan.png" alt="Trivy scan results">
 
 ## 7. Terraform: AWS VPC + EKS (`terraform/`)
 
@@ -197,6 +232,10 @@ terraform destroy                                # always, when done
 ```
 
 `use_nat_gateway = false` together with `node_capacity_type = "SPOT"` puts the nodes in public subnets with no NAT gateway, which is the cheapest setup for a short demo.
+
+<img src="screenshots/22-terraform-validate.png" alt="terraform validate" width="640">
+
+> `terraform plan`/`apply` need AWS credentials and were not run from this machine (see §13).
 
 ## 8. Kubernetes + Helm (`helm/gearloop/`)
 
@@ -223,6 +262,10 @@ What the chart renders:
 
 Changing the image tag and running `helm upgrade` again does a rolling update. `helm rollback gearloop <rev> -n gearloop` goes back to an earlier release.
 
+<img src="screenshots/23-kubectl-resources.png" alt="kubectl get pods,svc,ingress,hpa,pdb">
+
+<img src="screenshots/24-helm-release.png" alt="helm list, history and test">
+
 ### One-command local environment (minikube)
 
 ```bash
@@ -247,6 +290,14 @@ Moving the migration into the pod (an initContainer) removes the dependency on H
 The Ingress resource is only configuration. The **ingress-nginx controller** (the minikube addon, or a Helm install on EKS)
 does the routing. The browser only ever talks to one origin, so there is no CORS and no backend hostname in the JS bundle.
 
+<img src="screenshots/34-app-via-ingress.png" alt="GearLoop served through the Ingress at gearloop.local">
+
+<img src="screenshots/25-ingress-routing.png" alt="Ingress routing rules and curl checks">
+
+The frontend's nginx resolves the backend Service **per request** (`resolver` + variable `proxy_pass`), using the Service FQDN.
+Without that, a node restart made nginx exit with `host not found in upstream` before CoreDNS was ready, and the
+frontend crash-looped until DNS came back.
+
 ## 10. HPA
 
 ```bash
@@ -256,6 +307,14 @@ watch kubectl get hpa,pods -n gearloop
 
 The HPA needs CPU **requests** on the pods (set in `values.yaml`) and a metrics source
 (the minikube `metrics-server` addon, or the EKS `metrics-server` add-on from Terraform).
+
+A real run on minikube: CPU jumped to 363 % of the request, and the HPA went 2 → 4 → 6 replicas within about 45 seconds.
+
+<img src="screenshots/26-hpa-autoscaling.png" alt="HPA scaling from 2 to 6 replicas">
+
+<img src="screenshots/30-prometheus-query.png" alt="Requests per second per pod during the load test">
+
+*Requests/s per backend pod: two pods take the first burst, then traffic spreads across the new replicas (Prometheus shows UTC).*
 
 ## 11. Monitoring
 
@@ -270,16 +329,27 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
   requests/s by endpoint, p50/p95/p99 latency, status classes, checkouts in the last 24h by category, CPU per pod (the HPA input).
 * **Alerts.** Rules for backend down, 5xx rate > 5 %, p95 > 500 ms, and overdue equipment.
 
+<img src="screenshots/27-grafana-dashboard.png" alt="Grafana dashboard">
+
+| Prometheus targets: every backend pod `UP` | Alert rules (the load test pushed p95 over 500 ms → *pending*) |
+|---|---|
+| <img src="screenshots/28-prometheus-targets.png" alt="Prometheus targets"> | <img src="screenshots/29-prometheus-alerts.png" alt="Prometheus alerts"> |
+
+<img src="screenshots/31-metrics-endpoint.png" alt="Backend /metrics output">
+
 ## 12. Troubleshooting lab
 
 [`troubleshooting/README.md`](troubleshooting/README.md) has five broken scenarios, each with symptom, diagnosis and fix:
 ImagePullBackOff, Service with no endpoints, Running-but-not-Ready (bad DB secret), OOMKilled (exit 137),
 and Ingress pointing at the wrong Service port.
 
+<img src="screenshots/32-troubleshooting-lab.png" alt="Troubleshooting scenarios and their symptoms">
+
 ## 13. What has actually been verified
 
 | Area | Status |
 |---|---|
+| Resilience | ✅ after a minikube node restart the frontend crash-looped (`host not found in upstream`); fixed so nginx resolves per request, verified with an unresolvable upstream (nginx stays up, `/api` → 502) |
 | App, tests, migrations | ✅ 21 pytest + 5 vitest pass; `ruff` clean; migrations + `alembic check` run against PostgreSQL 17 |
 | UI | ✅ every dialog clicked through in headless Chrome against the real stack (add, check out, return, edit, duplicate-tag error, delete, filters); no horizontal scroll at 390px |
 | Docker | ✅ `docker compose up --build` brings up all 4 services; both images run non-root |
