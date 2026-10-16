@@ -16,6 +16,8 @@ The DevOps layer follows the course architecture. The application domain, the co
 
 *All screenshots in this README were captured from the running app and cluster; the full set is in [`screenshots/`](screenshots).*
 
+**Presentation:** [`presentation/GearLoop-Capstone.pptx`](presentation/GearLoop-Capstone.pptx), 19 slides with speaker notes.
+
 | Area | Course reference (TaskBoard) | GearLoop |
 |---|---|---|
 | Domain | single `tasks` table | `items` + `loans` (one-to-many), derived status (available / on loan / overdue / maintenance) |
