@@ -4,12 +4,12 @@
 backend:
   image:
     repository: ghcr.io/aastik-gg/gearloop-backend
-    tag: "bootstrap"
+    tag: "7368d57ef393dad0b88971288ae1adadba04cd19"
     pullPolicy: IfNotPresent
 frontend:
   image:
     repository: ghcr.io/aastik-gg/gearloop-frontend
-    tag: "bootstrap"
+    tag: "7368d57ef393dad0b88971288ae1adadba04cd19"
     pullPolicy: IfNotPresent
 postgres:
   existingSecret: gearloop-db # created by Terraform; never stored in Git
