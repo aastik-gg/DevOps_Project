@@ -37,6 +37,10 @@ postgres:
   database: gearloop
   username: gearloop
   password: ""         # empty = random password generated on first install and kept on upgrades
+  # Name of a Secret (keys: username, password, database-url) created outside the chart.
+  # Use this with Argo CD: it renders charts without cluster access, so the generated
+  # password above would change on every sync. Terraform creates this Secret in argocd mode.
+  existingSecret: ""
   storage: 2Gi
   storageClassName: ""
   externalUrl: ""

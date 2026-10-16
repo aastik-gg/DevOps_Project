@@ -1,0 +1,21 @@
+# Values used by Argo CD (see gitops/ and terraform/argocd.tf).
+# CI rewrites the two image tags below on every push to main; Argo CD sees the
+# commit and rolls the cluster to that exact image. Do not edit the tags by hand.
+backend:
+  image:
+    repository: ghcr.io/aastik-gg/gearloop-backend
+    tag: "bootstrap"
+    pullPolicy: IfNotPresent
+frontend:
+  image:
+    repository: ghcr.io/aastik-gg/gearloop-frontend
+    tag: "bootstrap"
+    pullPolicy: IfNotPresent
+postgres:
+  existingSecret: gearloop-db # created by Terraform; never stored in Git
+ingress:
+  host: gearloop.local
+monitoring:
+  serviceMonitor: {enabled: true}
+  prometheusRule: {enabled: true}
+  grafanaDashboard: {enabled: true}

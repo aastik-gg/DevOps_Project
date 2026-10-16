@@ -22,9 +22,11 @@ spec:
         {{- include "gearloop.labels" . | nindent 8 }}
         {{- include "gearloop.selectorLabels" (dict "ctx" . "component" "backend") | nindent 8 }}
         gearloop.io/db-client: "true"
+      {{- if not .Values.postgres.existingSecret }}
       annotations:
         # Roll pods when DB credentials change.
         checksum/db-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:

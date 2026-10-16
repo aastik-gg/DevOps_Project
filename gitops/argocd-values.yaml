@@ -1,0 +1,16 @@
+# Argo CD for a single-node classroom cluster: no SSO, plain HTTP behind ingress-nginx.
+# Installed by terraform/argocd.tf when deploy_mode = "argocd".
+configs:
+  params:
+    server.insecure: true          # TLS is not terminated here; ingress-nginx serves plain HTTP locally
+  cm:
+    timeout.reconciliation: 60s    # poll Git every minute instead of the default 3 minutes
+dex:
+  enabled: false
+notifications:
+  enabled: false
+server:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hostname: argocd.gearloop.local

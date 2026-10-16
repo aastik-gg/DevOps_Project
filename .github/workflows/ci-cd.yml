@@ -1,6 +1,6 @@
 name: GearLoop CI/CD
 
-# test  ->  build + scan (both images)  ->  push to GHCR (main only)  ->  deploy with Helm (main, opt-in)
+# test  ->  build + scan (both images)  ->  push to GHCR (main only)  ->  bump tags in Git  ->  Argo CD syncs
 on:
   push:
     branches: [main]
@@ -166,46 +166,38 @@ jobs:
         if: github.event_name != 'pull_request'
         run: docker push ${{ steps.img.outputs.name }}:${{ github.sha }}
 
-  deploy:
-    name: Deploy to Kubernetes (Helm)
+  gitops:
+    name: GitOps - bump image tags for Argo CD
     needs: images
-    # Opt-in: set repository variable DEPLOY_ENABLED=true and secret KUBE_CONFIG_DATA (base64 kubeconfig)
-    # once a cluster is reachable from GitHub.
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    # Pull-based deploy: CI never touches the cluster. It records the new image tag in Git;
+    # Argo CD (running inside the cluster) notices the commit and rolls the Deployments.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    environment: production
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
-        with:
-          version: ${{ env.HELM_VERSION }}
-      - name: Configure kubectl
+      - name: Point values-gitops.yaml at the images built from this commit
         env:
-          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+          SHA: ${{ github.sha }}
         run: |
-          mkdir -p ~/.kube
-          echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
-          chmod 600 ~/.kube/config
-          kubectl version
-      - name: helm upgrade --install
+          yq -i '.backend.image.tag = strenv(SHA) | .frontend.image.tag = strenv(SHA)' helm/gearloop/values-gitops.yaml
+          git diff --stat
+      - name: Commit and push (skipped by CI via [skip ci])
         run: |
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          kubectl apply -f k8s/namespace.yaml
-          helm upgrade --install gearloop ./helm/gearloop \
-            --namespace gearloop \
-            -f helm/gearloop/values-prod.yaml \
-            --set backend.image.repository=ghcr.io/$owner/gearloop-backend \
-            --set frontend.image.repository=ghcr.io/$owner/gearloop-frontend \
-            --set backend.image.tag=${{ github.sha }} \
-            --set frontend.image.tag=${{ github.sha }} \
-            --atomic --wait --timeout 10m
-      - name: Smoke test (helm test)
-        run: helm test gearloop -n gearloop --logs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add helm/gearloop/values-gitops.yaml
+          git diff --cached --quiet && { echo "tags already up to date"; exit 0; }
+          git commit -m "deploy: gearloop ${GITHUB_SHA::7} [skip ci]"
+          for attempt in 1 2 3; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            sleep 5
+          done
+          exit 1
       - name: Summary
         run: |
           {
-            echo "### Deployed \`${GITHUB_SHA::7}\`"
-            echo '```'
-            kubectl get deploy,hpa,ingress -n gearloop
-            echo '```'
+            echo "### Released \`${GITHUB_SHA::7}\` to GitOps"
+            echo "Argo CD will sync \`helm/gearloop\` with images tagged \`${GITHUB_SHA}\`."
           } >> "$GITHUB_STEP_SUMMARY"

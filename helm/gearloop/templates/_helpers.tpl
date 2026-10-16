@@ -26,7 +26,7 @@ app.kubernetes.io/component: {{ .component }}
 {{- printf "%s:%s" .image.repository (default .ctx.Chart.AppVersion .image.tag) -}}
 {{- end -}}
 
-{{- define "gearloop.dbSecret" -}}{{ include "gearloop.fullname" . }}-db{{- end -}}
+{{- define "gearloop.dbSecret" -}}{{ default (printf "%s-db" (include "gearloop.fullname" .)) .Values.postgres.existingSecret }}{{- end -}}
 {{- define "gearloop.postgresHost" -}}{{ include "gearloop.fullname" . }}-postgres{{- end -}}
 
 {{/* Keep a generated password stable across upgrades by reading the existing Secret. */}}

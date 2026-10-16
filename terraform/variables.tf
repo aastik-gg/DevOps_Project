@@ -10,6 +10,22 @@ variable "kube_context" {
   default     = "minikube"
 }
 
+variable "deploy_mode" {
+  description = <<-EOT
+    How the GearLoop chart reaches the cluster:
+      helm   = Terraform installs the release directly (works offline, no Git remote needed)
+      argocd = Terraform installs Argo CD, which deploys the chart from Git (GitOps)
+    Switch modes with `terraform destroy` first: the database volume and Secret differ.
+  EOT
+  type        = string
+  default     = "helm"
+
+  validation {
+    condition     = contains(["helm", "argocd"], var.deploy_mode)
+    error_message = "deploy_mode must be helm or argocd."
+  }
+}
+
 variable "namespace" {
   description = "Namespace for the GearLoop release"
   type        = string
@@ -79,4 +95,35 @@ variable "quota" {
     limits_memory   = "8Gi"
     pods            = 30
   }
+}
+
+# ---- GitOps (deploy_mode = "argocd") ----
+variable "gitops_repo_url" {
+  description = "Git repository Argo CD deploys from"
+  type        = string
+  default     = "https://github.com/aastik-gg/gearloop.git"
+}
+
+variable "gitops_revision" {
+  description = "Branch, tag or commit Argo CD tracks"
+  type        = string
+  default     = "main"
+}
+
+variable "gitops_value_files" {
+  description = "Values files (relative to helm/gearloop) Argo CD renders the chart with"
+  type        = list(string)
+  default     = ["values-gitops.yaml"]
+}
+
+variable "argocd_chart_version" {
+  description = "Pinned argo-cd chart version"
+  type        = string
+  default     = "10.10.5"
+}
+
+variable "argocd_apps_chart_version" {
+  description = "Pinned argocd-apps chart version"
+  type        = string
+  default     = "2.0.6"
 }

@@ -1,0 +1,30 @@
+# The GearLoop Argo CD Application, for installing by hand:
+#   kubectl create namespace gearloop
+#   kubectl create secret generic gearloop-db -n gearloop \
+#     --from-literal=username=gearloop --from-literal=password=<choose> \
+#     --from-literal=database-url='postgresql+psycopg://gearloop:<choose>@gearloop-postgres:5432/gearloop'
+#   kubectl apply -f gitops/application.yaml
+# terraform/argocd.tf creates the same Application (and the Secret) when deploy_mode = "argocd".
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gearloop
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # deleting the Application deletes what it deployed
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/aastik-gg/gearloop.git
+    targetRevision: main
+    path: helm/gearloop
+    helm:
+      valueFiles:
+        - values-gitops.yaml       # image tags here are bumped by CI on every push to main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gearloop
+  syncPolicy:
+    automated:
+      prune: true                  # resources removed from Git are removed from the cluster
+      selfHeal: true               # manual kubectl edits are reverted to what Git says

@@ -1,4 +1,7 @@
+# deploy_mode = "helm": Terraform installs the chart itself.
 resource "helm_release" "gearloop" {
+  count = var.deploy_mode == "helm" ? 1 : 0
+
   name      = "gearloop"
   chart     = "${path.module}/../helm/gearloop"
   namespace = kubernetes_namespace_v1.gearloop.metadata[0].name
