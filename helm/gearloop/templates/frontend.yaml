@@ -35,7 +35,7 @@ spec:
               containerPort: 8080
           env:
             - name: API_UPSTREAM
-              value: http://{{ include "gearloop.fullname" . }}-backend:8000
+              value: http://{{ include "gearloop.fullname" . }}-backend.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}:8000
           livenessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 15

@@ -2,6 +2,7 @@
 # values-eks.yaml) only override what differs.
 
 imagePullSecrets: []
+clusterDomain: cluster.local
 
 backend:
   image:

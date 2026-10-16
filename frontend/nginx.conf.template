@@ -1,4 +1,9 @@
-# Rendered by the nginx image's envsubst step at container start (${API_UPSTREAM}).
+# Rendered by the nginx image's envsubst step at container start (${API_UPSTREAM}, ${NGINX_LOCAL_RESOLVERS}).
+
+# Resolve the API host per request, not once at startup: if DNS is not ready yet
+# (e.g. right after a node restart) nginx keeps running instead of crash-looping.
+resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
 server {
   listen 8080;
   server_name _;
@@ -28,7 +33,8 @@ server {
   # In Kubernetes the Ingress sends /api straight to the backend; this path is used by compose
   # and when someone port-forwards the frontend Service.
   location /api/ {
-    proxy_pass ${API_UPSTREAM};
+    set $api_upstream ${API_UPSTREAM};
+    proxy_pass $api_upstream;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
