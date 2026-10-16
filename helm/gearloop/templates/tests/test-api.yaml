@@ -18,10 +18,19 @@ spec:
       command: ["sh", "-c"]
       args:
         - |
-          set -e
           base=http://{{ include "gearloop.fullname" . }}-backend:8000
-          wget -qO- $base/ready | grep READY
-          wget -qO- $base/api/stats | grep total_items
-          wget -qO- http://{{ include "gearloop.fullname" . }}-frontend/ | grep -i gearloop
+          ui=http://{{ include "gearloop.fullname" . }}-frontend
+          # Retry with short timeouts: right after a rollout an endpoint can briefly point at a terminating pod.
+          check() {
+            for i in 1 2 3 4 5 6; do
+              wget -T 5 -qO- "$1" | grep -qi "$2" && { echo "ok   $1"; return 0; }
+              sleep 3
+            done
+            echo "FAIL $1 (expected '$2')"; return 1
+          }
+          check "$base/ready" READY &&
+          check "$base/api/stats" total_items &&
+          check "$ui/" gearloop &&
+          check "$ui/api/stats" total_items
       securityContext:
         {{- include "gearloop.containerSecurityContext" . | nindent 8 }}
