@@ -1,0 +1,18 @@
+# Copy to terraform.tfvars (git-ignored) and adjust. Never put AWS keys here:
+# use `aws configure` / AWS_PROFILE / SSO instead.
+aws_region         = "ap-south-1"
+environment        = "dev"
+cluster_name       = "gearloop-eks"
+kubernetes_version = "1.34"
+
+# Cheapest demo: no NAT gateway, SPOT nodes in public subnets.
+use_nat_gateway    = false
+node_capacity_type = "SPOT"
+node_instance_types = ["t3.medium", "t3a.medium"]
+
+node_min_size     = 2
+node_desired_size = 2
+node_max_size     = 3
+
+# Lock the Kubernetes API to your own IP: curl -s https://checkip.amazonaws.com
+cluster_public_access_cidrs = ["203.0.113.10/32"]
