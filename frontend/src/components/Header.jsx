@@ -10,7 +10,7 @@ export default function Header({ onAdd }) {
           </svg>
           <div>
             <span className="brand-name">GearLoop</span>
-            <span className="brand-tag">Lab equipment desk</span>
+            <span className="brand-tag">Lab equipment desk · Campus Makerspace</span>
           </div>
         </div>
         <button type="button" className="btn btn-primary" onClick={onAdd}>
