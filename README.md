@@ -15,9 +15,9 @@ The DevOps layer follows the course architecture. The application domain, the co
 | Area | Course reference (TaskBoard) | GearLoop |
 |---|---|---|
 | Domain | single `tasks` table | `items` + `loans` (one-to-many), derived status (available / on loan / overdue / maintenance) |
-| Migrations | 1 revision, run at container start | 2 revisions; run once by a compose `migrate` service and a **Helm hook Job**, so replicas never race. CI runs `alembic check` against real Postgres to catch model/migration drift |
+| Migrations | 1 revision, run in the container CMD | 2 revisions, applied by `python -m app.migrate`: compose runs it as a one-shot `migrate` service, Kubernetes as a backend **initContainer** holding a **Postgres advisory lock**, so replicas take turns instead of racing. CI runs `alembic check` against real Postgres to catch model/migration drift |
 | Data integrity | none | partial unique index: an item can never have two open loans, even under concurrent checkouts |
-| Metrics | HTTP metrics only | HTTP metrics **plus business metrics**: `gearloop_items{status}` (computed at scrape time), `gearloop_checkouts_total{category}`, `gearloop_returns_total{late}` |
+| Metrics | HTTP metrics only | HTTP metrics **plus business metrics** read from the DB at scrape time, so they agree across replicas and survive restarts: `gearloop_items{status}`, `gearloop_checkouts_last_24h{category}`; plus per-pod counters `gearloop_checkouts_total`, `gearloop_returns_total{late}` |
 | Grafana | install only | dashboard shipped **as code** in the chart (ConfigMap picked up by the Grafana sidecar) + `PrometheusRule` alerts |
 | Containers | frontend runs as root | both images non-root (backend uid 10001, unprivileged nginx uid 101); read-only root FS in Kubernetes; pip removed from the runtime image |
 | Kubernetes | Deployment + Service | Pod Security `restricted` namespace, StatefulSet Postgres, PDBs, NetworkPolicy (only backend may reach Postgres), startup/readiness/liveness probes, `helm test` smoke test |
@@ -40,8 +40,8 @@ The DevOps layer follows the course architecture. The application domain, the co
                                                    │                                          ▼
  Browser ─► Ingress (nginx) ─┬─ /            ─► frontend Service ─► nginx pods ×2 (React build)
                              └─ /api, /docs  ─► backend Service  ─► FastAPI pods ×2..6 (HPA on CPU)
-                                                                        │            ▲
-                                             Helm hook Job: alembic ────┤            │ scrape /metrics (ServiceMonitor)
+                                                  initContainer: app.migrate ─┤            ▲
+                                                  (Alembic + advisory lock)   │            │ scrape /metrics (ServiceMonitor)
                                                                         ▼            │
                                                          PostgreSQL StatefulSet + PVC   Prometheus ─► Grafana dashboard
                                                          (NetworkPolicy-protected)       └─► PrometheusRule alerts
@@ -52,7 +52,7 @@ The DevOps layer follows the course architecture. The application domain, the co
 ```text
 gearloop/
 ├── backend/                  FastAPI app
-│   ├── app/                  main.py, routers/ (items, loans, stats), models, schemas, metrics, seed
+│   ├── app/                  main.py, routers/ (items, loans, stats), models, schemas, metrics, migrate, seed
 │   ├── alembic/versions/     0001_create_items, 0002_create_loans
 │   ├── tests/                pytest (SQLite in-memory, never the real DB)
 │   ├── Dockerfile            multi-stage, non-root, no pip at runtime
@@ -113,7 +113,7 @@ docker compose up --build
 
 `docker compose down` stops the stack. `docker compose down -v` also deletes the database volume.
 
-The `migrate` service runs `alembic upgrade head && python -m app.seed` once and exits.
+The `migrate` service runs `python -m app.migrate --seed` once and exits.
 `backend` starts only after it finishes successfully, and `frontend` starts only after the backend is healthy.
 
 ### Without Docker
@@ -123,7 +123,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 export DATABASE_URL='postgresql+psycopg://gearloop:gearloop@localhost:5432/gearloop'
-alembic upgrade head && python -m app.seed
+python -m app.migrate --seed
 uvicorn app.main:app --reload --port 8000
 
 cd ../frontend && npm ci && npm run dev     # http://localhost:5173, proxies /api to :8000
@@ -214,11 +214,11 @@ What the chart renders:
 | `Deployment` backend / frontend | ≥2 replicas, rolling updates with `maxUnavailable: 0`, topology spread, startup + readiness + liveness probes, read-only root FS, all capabilities dropped |
 | `Service` ×3 | ClusterIP for backend (8000) and frontend (80), headless for Postgres |
 | `StatefulSet` postgres | `volumeClaimTemplates` PVC, runs as uid 70; password generated once and kept across upgrades (`lookup`) |
-| `Job` migrate | `post-install,pre-upgrade` hook: waits for the DB, runs `alembic upgrade head` and seeds demo data |
+| initContainer `migrate` | in every backend pod: waits for the DB, takes a Postgres advisory lock, runs Alembic to head, seeds an empty DB. The first pod does the work; the others find the schema at head and start |
 | `Ingress` | `/api`, `/docs`, `/openapi.json` → backend; `/` → frontend; host `gearloop.local` |
 | `HorizontalPodAutoscaler` | backend 2→6 at 60 % CPU, fast scale-up, 2-minute scale-down stabilisation |
 | `PodDisruptionBudget` ×2 | keep ≥1 pod during node drains |
-| `NetworkPolicy` | only backend and migrate pods may open 5432 |
+| `NetworkPolicy` | only pods labelled `gearloop.io/db-client=true` (the backend) may open 5432 |
 | `ServiceMonitor` · `PrometheusRule` · dashboard `ConfigMap` | monitoring (when enabled) |
 
 Changing the image tag and running `helm upgrade` again does a rolling update. `helm rollback gearloop <rev> -n gearloop` goes back to an earlier release.
@@ -229,6 +229,18 @@ Changing the image tag and running `helm upgrade` again does a rolling update. `
 ./scripts/minikube-up.sh
 echo "$(minikube ip) gearloop.local grafana.gearloop.local" | sudo tee -a /etc/hosts
 ```
+
+### Why an initContainer and not a Helm hook Job
+
+The first version ran migrations in a `post-install` Helm hook Job. The first real `helm install --wait` on minikube
+**deadlocked**:
+* Helm waits for every pod to be Ready *before* it runs post-install hooks.
+* The backend's `/ready` returns 503 until the tables exist.
+* So the pods waited for the migration, and the migration waited for the pods.
+
+Moving the migration into the pod (an initContainer) removes the dependency on Helm's ordering. The advisory lock in
+`app/migrate.py` makes it safe with any number of replicas. That was tested with 4 concurrent runs against Postgres:
+1 migrated and seeded, and 3 waited and skipped.
 
 ## 9. Ingress
 
@@ -255,7 +267,7 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 
 * **Prometheus.** The chart's `ServiceMonitor` scrapes backend `/metrics` every 15s. Check *Status → Targets*.
 * **Grafana.** The dashboard *GearLoop - Lab Equipment Desk* is auto-imported. Panels: equipment by status, pods up, error rate,
-  requests/s by endpoint, p50/p95/p99 latency, status classes, checkouts per category, CPU per pod (the HPA input).
+  requests/s by endpoint, p50/p95/p99 latency, status classes, checkouts in the last 24h by category, CPU per pod (the HPA input).
 * **Alerts.** Rules for backend down, 5xx rate > 5 %, p95 > 500 ms, and overdue equipment.
 
 ## 12. Troubleshooting lab
@@ -264,7 +276,23 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
 ImagePullBackOff, Service with no endpoints, Running-but-not-Ready (bad DB secret), OOMKilled (exit 137),
 and Ingress pointing at the wrong Service port.
 
-## 13. Final demo script
+## 13. What has actually been verified
+
+| Area | Status |
+|---|---|
+| App, tests, migrations | ✅ 21 pytest + 5 vitest pass; `ruff` clean; migrations + `alembic check` run against PostgreSQL 17 |
+| UI | ✅ every dialog clicked through in headless Chrome against the real stack (add, check out, return, edit, duplicate-tag error, delete, filters); no horizontal scroll at 390px |
+| Docker | ✅ `docker compose up --build` brings up all 4 services; both images run non-root |
+| Trivy | ✅ both images clean for fixable HIGH/CRITICAL with Trivy 0.76 (after removing pip, see §6) |
+| Helm on minikube | ✅ install, 3 upgrades, rolling restart of 6 pods, `helm test` passes; Pod Security `restricted` namespace accepted every pod |
+| Ingress | ✅ `/`, `/api`, `/docs` routed through ingress-nginx |
+| HPA | ✅ `load-test.sh` scaled the backend 2 → 4 → 6 |
+| Prometheus / Grafana | ✅ both backend targets UP, 4 alert rules loaded, dashboard auto-imported with every panel populated |
+| Troubleshooting lab | ✅ all 5 manifests produce the documented symptom (ErrImagePull, no endpoints, readiness 503, OOMKilled 137, ingress 503) |
+| GitHub Actions | ⚠️ `actionlint` clean; needs a push to GitHub to actually run |
+| Terraform | ⚠️ `terraform validate` + `fmt` pass; `plan`/`apply` need AWS credentials (and cost money: EKS ≈ $0.10/h + nodes) |
+
+## 14. Final demo script
 
 1. Open the app, check out an item, watch the summary strip and activity feed update.
 2. Use `/docs` to do item CRUD; `kubectl exec -it gearloop-postgres-0 -n gearloop -- psql -U gearloop -c 'select * from loans'`.
